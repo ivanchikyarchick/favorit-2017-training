@@ -1,0 +1,740 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b172a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Фаворит 2017 — Тренування</title>
+
+  <style>
+    :root {
+      --navy: #0b172a;
+      --blue: #1769e0;
+      --light-blue: #eaf3ff;
+      --green: #11865b;
+      --green-bg: #e8f8f1;
+      --yellow: #a86500;
+      --yellow-bg: #fff5d9;
+      --red: #bf2935;
+      --red-bg: #ffebed;
+      --text: #152033;
+      --muted: #67748a;
+      --line: #e5eaf1;
+      --card: #ffffff;
+      --bg: #f3f6fa;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-width: 320px;
+      color: var(--text);
+      background: var(--bg);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    }
+
+    .app {
+      max-width: 680px;
+      min-height: 100vh;
+      margin: auto;
+      background: var(--bg);
+    }
+
+    header {
+      color: white;
+      padding: max(28px, env(safe-area-inset-top)) 22px 28px;
+      background: linear-gradient(135deg, #071426, #123a73);
+    }
+
+    .team {
+      display: flex;
+      align-items: center;
+      gap: 13px;
+    }
+
+    .team-logo {
+  display: block;
+  width: 64px;
+  height: 64px;
+  flex: 0 0 64px;
+  object-fit: contain;
+  padding: 3px;
+  background: #ffffff;
+  border: 2px solid rgba(255, 255, 255, 0.7);
+  border-radius: 16px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.22);
+}
+    
+
+    h1 { margin: 0; font-size: 23px; line-height: 1.2; }
+    .subtitle { margin: 4px 0 0; color: #cbdcf9; font-size: 14px; }
+
+    main { padding: 16px; }
+    .card {
+      margin-bottom: 16px;
+      padding: 18px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      box-shadow: 0 2px 10px rgba(17, 35, 63, .04);
+    }
+
+    .label {
+      margin-bottom: 7px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 750;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .next-title { font-size: 21px; font-weight: 800; }
+    .time { margin-top: 4px; color: var(--blue); font-size: 18px; font-weight: 800; }
+    .place { margin: 8px 0 0; color: var(--muted); font-size: 14px; line-height: 1.45; }
+
+    .countdown {
+      margin-top: 16px;
+      padding: 13px;
+      text-align: center;
+      color: #123a73;
+      background: var(--light-blue);
+      border-radius: 13px;
+    }
+
+    .countdown strong {
+      display: block;
+      margin-top: 3px;
+      font-size: 26px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .alarm {
+      border: 1px solid #f1d787;
+      background: var(--yellow-bg);
+    }
+
+    .alarm-top {
+      display: flex;
+      align-items: center;
+      gap: 11px;
+    }
+
+    .alarm-icon { font-size: 29px; }
+    .alarm-title { color: var(--yellow); font-size: 17px; font-weight: 800; }
+    .alarm-text { margin: 9px 0 0; color: #674800; font-size: 14px; line-height: 1.45; }
+
+    .rule {
+      margin-top: 13px;
+      padding-top: 13px;
+      border-top: 1px solid #efdc9e;
+      color: #75530b;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .button {
+      display: block;
+      width: 100%;
+      margin-top: 14px;
+      padding: 13px 16px;
+      color: white;
+      text-align: center;
+      text-decoration: none;
+      font-size: 15px;
+      font-weight: 750;
+      background: var(--blue);
+      border-radius: 12px;
+    }
+
+    .section-title { margin: 2px 0 12px; font-size: 19px; }
+    .team-photo-card {
+      padding: 0;
+      overflow: hidden;
+    }
+
+    .team-photo {
+      display: block;
+      width: 100%;
+      min-height: 260px;
+      max-height: 430px;
+      object-fit: cover;
+    }
+
+    .training {
+      display: grid;
+      grid-template-columns: 86px 1fr;
+      gap: 10px;
+      padding: 15px 0;
+      border-top: 1px solid var(--line);
+    }
+
+    .training:first-of-type { border-top: 0; padding-top: 4px; }
+    .day { font-weight: 800; }
+    .training-time { color: var(--blue); font-weight: 800; }
+    .training-place { margin-top: 4px; color: var(--muted); font-size: 13px; line-height: 1.4; }
+
+    footer {
+      padding: 7px 20px calc(24px + env(safe-area-inset-bottom));
+      color: var(--muted);
+      text-align: center;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    footer a {
+      color: inherit;
+      font-weight: 700;
+    }
+
+    .online-note {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      margin-top: 12px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .dot { width: 8px; height: 8px; background: #f0a500; border-radius: 50%; }
+  </style>
+</head>
+
+<body>
+  <div class="app">
+    <header>
+      <div class="team">
+        <img
+  class="team-logo"
+  src="./logo.png"
+  alt="Логотип ФК Фаворит Бориспіль"
+  width="64"
+  height="64"
+>
+        <div>
+          <h1>Фаворит 2017 — Тренування</h1>
+          <p class="subtitle">Розклад, таймер та безпека команди</p>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="card team-photo-card" aria-label="Фото команди">
+        <img
+          class="team-photo"
+          src="./image.png"
+          alt="Фото команди ФК Фаворит 2017"
+        >
+      </section>
+
+      <section class="card">
+        <div class="label">Наступне тренування</div>
+        <div class="next-title" id="nextDay">Завантаження…</div>
+        <div class="time" id="nextTime"></div>
+        <p class="place" id="nextPlace"></p>
+
+        <div class="countdown">
+          До початку залишилось
+          <strong id="countdown">—</strong>
+        </div>
+
+        <a class="button" id="routeLink" href="#" target="_blank" rel="noopener">
+          🗺️ Відкрити маршрут
+        </a>
+      </section>
+
+<section class="card alarm" id="alarmCard">
+  <div class="alarm-top">
+    <div class="alarm-icon" id="alarmIcon">⏳</div>
+    <div>
+      <div class="label" style="color:#9a6500;margin:0 0 3px">
+        БОРИСПІЛЬСЬКИЙ РАЙОН
+      </div>
+      <div class="alarm-title" id="alarmTitle">Перевіряємо статус тривоги…</div>
+    </div>
+  </div>
+
+  <p class="alarm-text" id="alarmText">
+    Отримуємо актуальні дані.
+  </p>
+
+  <div class="rule" id="trainingRule">
+    <strong>Правило тренування:</strong> якщо на початок заняття є повітряна тривога,
+    чекаємо відбою 30 хвилин. Якщо відбою немає — тренування не відбудеться.
+  </div>
+
+  <a class="button" id="alarmMapLink" style="background:#9b6500"
+    href="https://map.ukrainealarm.com/" target="_blank" rel="noopener">
+    Перевірити карту тривог
+  </a>
+
+  <div class="online-note">
+    <span class="dot" id="alarmDot"></span>
+    <span id="alarmUpdated">Оновлення даних…</span>
+  </div>
+</section>
+
+      <section class="card">
+        <h2 class="section-title">📅 Розклад</h2>
+
+        <div class="training">
+          <div class="day">Понеділок</div>
+          <div>
+            <div class="training-time">19:15 – 20:30</div>
+            <div class="training-place">Ліцей «Основа» (8 школа)<br>Соборна, 3</div>
+          </div>
+        </div>
+
+        <div class="training">
+          <div class="day">Середа</div>
+          <div>
+            <div class="training-time">19:15 – 20:30</div>
+            <div class="training-place">Ліцей «Основа» (8 школа)<br>Соборна, 3</div>
+          </div>
+        </div>
+
+        <div class="training">
+          <div class="day">Четвер</div>
+          <div>
+            <div class="training-time">19:30 – 20:45</div>
+            <div class="training-place">Гімназія «Перспектива» (4 школа)<br>Київський шлях, 97</div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      ФК «Фаворит», 2017 р. н. · Тренування 3 рази на тиждень<br>
+      Ідея та частина коду: <a
+        href="https://github.com/Posterminal/favorit-2016-training"
+        target="_blank"
+        rel="noopener"
+      >Posterminal/favorit-2016-training</a><br>
+      Для встановлення на iPhone: Safari → Поділитися → «На екран “Додому”».
+    </footer>
+  </div>
+<script>
+const API_URL = "https://neptun.in.ua/api/v1/alerts";
+const DISTRICT_NAME = "Бориспільський район";
+const OBLAST_NAME = "Київська область";
+
+const trainings = [
+  {
+    dayNumber: 1,
+    day: "Понеділок",
+    time: "19:15 – 20:30",
+    hour: 19,
+    minute: 15,
+    place: "Ліцей «Основа» (8 школа), Соборна, 3",
+    map: "https://www.google.com/maps/search/?api=1&query=Ліцей+Основа,+Соборна+3,+Бориспіль"
+  },
+  {
+    dayNumber: 3,
+    day: "Середа",
+    time: "19:15 – 20:30",
+    hour: 19,
+    minute: 15,
+    place: "Ліцей «Основа» (8 школа), Соборна, 3",
+    map: "https://www.google.com/maps/search/?api=1&query=Ліцей+Основа,+Соборна+3,+Бориспіль"
+  },
+  {
+    dayNumber: 4,
+    day: "Четвер",
+    time: "19:30 – 20:45",
+    hour: 19,
+    minute: 30,
+    place: "Гімназія «Перспектива» (4 школа), Київський шлях, 97",
+    map: "https://www.google.com/maps/search/?api=1&query=Гімназія+Перспектива,+Київський+шлях+97,+Бориспіль"
+  }
+];
+
+function getNextTraining() {
+  const now = new Date();
+  let closest = null;
+
+  for (let addDays = 0; addDays < 8; addDays++) {
+    const date = new Date(now);
+    date.setDate(now.getDate() + addDays);
+
+    for (const training of trainings) {
+      if (date.getDay() !== training.dayNumber) continue;
+
+      const start = new Date(date);
+      start.setHours(training.hour, training.minute, 0, 0);
+
+      if (start > now && (!closest || start < closest.start)) {
+        closest = {
+          ...training,
+          start
+        };
+      }
+    }
+  }
+
+  return closest;
+}
+
+function getTodayTrainingState() {
+  const now = new Date();
+
+  const training = trainings.find(
+    item => item.dayNumber === now.getDay()
+  );
+
+  if (!training) return null;
+
+  const start = new Date(now);
+  start.setHours(training.hour, training.minute, 0, 0);
+
+  const waitUntil = new Date(
+    start.getTime() + 30 * 60 * 1000
+  );
+
+  return {
+    training,
+    start,
+    waitUntil,
+    isAfterStart: now >= start,
+    isAfterWaitingPeriod: now >= waitUntil
+  };
+}
+
+function updateTrainingCard() {
+  const next = getNextTraining();
+  if (!next) return;
+
+  document.getElementById("nextDay").textContent = next.day;
+  document.getElementById("nextTime").textContent = next.time;
+  document.getElementById("nextPlace").textContent = next.place;
+  document.getElementById("routeLink").href = next.map;
+
+  const diff = Math.max(0, next.start.getTime() - Date.now());
+
+  const days = Math.floor(diff / 86400000);
+  const hours = Math.floor(
+    (diff % 86400000) / 3600000
+  );
+  const minutes = Math.floor(
+    (diff % 3600000) / 60000
+  );
+  const seconds = Math.floor(
+    (diff % 60000) / 1000
+  );
+
+  document.getElementById("countdown").textContent =
+    (days > 0 ? `${days} дн. ` : "") +
+    `${String(hours).padStart(2, "0")}:` +
+    `${String(minutes).padStart(2, "0")}:` +
+    `${String(seconds).padStart(2, "0")}`;
+}
+
+function parseDate(value) {
+  if (!value) return null;
+
+  const date = new Date(value);
+
+  return Number.isNaN(date.getTime())
+    ? null
+    : date;
+}
+
+function formatAlertTime(value) {
+  const date = parseDate(value);
+
+  if (!date) return "час невідомий";
+
+  return date.toLocaleString("uk-UA", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
+function formatUpdateTime(value) {
+  const date = parseDate(value);
+
+  if (!date) return "час оновлення невідомий";
+
+  return date.toLocaleTimeString("uk-UA", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit"
+  });
+}
+
+function setAlarmAppearance({
+  icon,
+  title,
+  text,
+  background,
+  border,
+  titleColor,
+  textColor,
+  dotColor,
+  updatedAt
+}) {
+  const card = document.getElementById("alarmCard");
+  const alarmIcon = document.getElementById("alarmIcon");
+  const alarmTitle = document.getElementById("alarmTitle");
+  const alarmText = document.getElementById("alarmText");
+  const trainingRule = document.getElementById("trainingRule");
+  const alarmMapLink = document.getElementById("alarmMapLink");
+  const alarmDot = document.getElementById("alarmDot");
+  const alarmUpdated = document.getElementById("alarmUpdated");
+
+  if (
+    !card ||
+    !alarmIcon ||
+    !alarmTitle ||
+    !alarmText ||
+    !trainingRule ||
+    !alarmMapLink ||
+    !alarmDot ||
+    !alarmUpdated
+  ) {
+    return;
+  }
+
+  card.style.background = background;
+  card.style.borderColor = border;
+
+  alarmIcon.textContent = icon;
+  alarmTitle.textContent = title;
+  alarmTitle.style.color = titleColor;
+
+  alarmText.textContent = text;
+  alarmText.style.color = textColor;
+
+  trainingRule.style.color = textColor;
+  trainingRule.style.borderTopColor = border;
+
+  alarmMapLink.style.background = titleColor;
+  alarmDot.style.background = dotColor;
+
+  alarmUpdated.innerHTML = `
+    Оновлено: ${formatUpdateTime(updatedAt)} ·
+    <a
+      href="https://neptun.in.ua/"
+      target="_blank"
+      rel="noopener"
+      style="color:inherit;font-weight:700"
+    >Дані: Карта повітряних тривог — NEPTUN</a>
+    <br>
+    ⚠️ NEPTUN — інформаційний агрегатор.
+    Обов’язково перевіряйте офіційні джерела.
+  `;
+}
+
+function showAlarmCard({
+  active,
+  changed,
+  updatedAt,
+  scope
+}) {
+  const trainingState = getTodayTrainingState();
+  const alertStartedAt = parseDate(changed);
+
+  /*
+    Правило очікування 30 хвилин застосовується лише тоді,
+    коли тривога вже була активною на момент початку заняття.
+  */
+  const alertWasActiveAtStart =
+    active &&
+    trainingState &&
+    alertStartedAt &&
+    alertStartedAt <= trainingState.start;
+
+  if (!active) {
+    setAlarmAppearance({
+      icon: "🟢",
+      title: "Активної тривоги немає",
+      text:
+        "За даними NEPTUN, у Бориспільському районі активної " +
+        "повітряної тривоги зараз немає. Перед виїздом " +
+        "обов’язково перевірте офіційні джерела.",
+      background: "#e8f8f1",
+      border: "#9edbbf",
+      titleColor: "#11865b",
+      textColor: "#176244",
+      dotColor: "#18a66b",
+      updatedAt
+    });
+
+    return;
+  }
+
+  if (
+    alertWasActiveAtStart &&
+    trainingState.isAfterStart &&
+    !trainingState.isAfterWaitingPeriod
+  ) {
+    const millisecondsLeft =
+      trainingState.waitUntil.getTime() - Date.now();
+
+    const minutesLeft = Math.max(
+      1,
+      Math.ceil(millisecondsLeft / 60000)
+    );
+
+    setAlarmAppearance({
+      icon: "🟡",
+      title: `Чекаємо відбій — залишилось ${minutesLeft} хв.`,
+      text:
+        "На момент початку тренування повітряна тривога була " +
+        "активною. Чекаємо відбою до 30 хвилин після початку. " +
+        "Обов’язково перевірте офіційні джерела.",
+      background: "#fff5d9",
+      border: "#f1d787",
+      titleColor: "#a86500",
+      textColor: "#674800",
+      dotColor: "#f0a500",
+      updatedAt
+    });
+
+    return;
+  }
+
+  if (
+    alertWasActiveAtStart &&
+    trainingState.isAfterWaitingPeriod
+  ) {
+    setAlarmAppearance({
+      icon: "⚫",
+      title: "Тренування сьогодні не відбудеться",
+      text:
+        "Минуло 30 хвилин від початку тренування, а тривога " +
+        "досі активна. Перевірте офіційні повідомлення та " +
+        "дотримуйтеся правил безпеки.",
+      background: "#f0f1f3",
+      border: "#c8cbd1",
+      titleColor: "#30343b",
+      textColor: "#4c535d",
+      dotColor: "#30343b",
+      updatedAt
+    });
+
+    return;
+  }
+
+  setAlarmAppearance({
+    icon: "🔴",
+    title:
+      scope === OBLAST_NAME
+        ? "Повітряна тривога в Київській області"
+        : "Повітряна тривога в Бориспільському районі",
+    text:
+      `Тривога активна з ${formatAlertTime(changed)}. ` +
+      "Дотримуйтеся правил безпеки та обов’язково перевірте " +
+      "офіційні джерела.",
+    background: "#ffebed",
+    border: "#f0a9b0",
+    titleColor: "#bf2935",
+    textColor: "#84232c",
+    dotColor: "#e4333e",
+    updatedAt
+  });
+}
+
+function showAlarmError() {
+  setAlarmAppearance({
+    icon: "⚠️",
+    title: "Не вдалося перевірити статус тривоги",
+    text:
+      "Статус зараз невідомий. Не вважайте це відсутністю " +
+      "тривоги. Перед виїздом обов’язково перевірте офіційні " +
+      "джерела оповіщення.",
+    background: "#fff5d9",
+    border: "#f1d787",
+    titleColor: "#a86500",
+    textColor: "#674800",
+    dotColor: "#f0a500",
+    updatedAt: null
+  });
+}
+
+async function updateAlarmStatus() {
+  try {
+    const response = await fetch(API_URL, {
+      method: "GET",
+      cache: "no-store",
+      headers: {
+        Accept: "application/json"
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        `NEPTUN повернув HTTP ${response.status}`
+      );
+    }
+
+    const data = await response.json();
+
+    if (
+      !Array.isArray(data.raions) ||
+      !Array.isArray(data.oblasts)
+    ) {
+      throw new Error(
+        "Некоректний формат відповіді NEPTUN"
+      );
+    }
+
+    /*
+      Перевіряємо саме Бориспільський район.
+      Додатково враховуємо тривогу для всієї Київської області.
+    */
+    const districtAlert = data.raions.find(item =>
+      item.name === DISTRICT_NAME &&
+      item.oblast === OBLAST_NAME
+    );
+
+    const oblastAlert = data.oblasts.find(item =>
+      item.name === OBLAST_NAME ||
+      item.oblast === OBLAST_NAME
+    );
+
+    const currentAlert =
+      districtAlert || oblastAlert || null;
+
+    /*
+      Якщо відповідь надто стара, не показуємо зелений статус.
+    */
+    const serverUpdate = parseDate(data.updatedAt);
+
+    if (
+      !serverUpdate ||
+      Date.now() - serverUpdate.getTime() > 10 * 60 * 1000
+    ) {
+      throw new Error(
+        "Дані NEPTUN не оновлювалися понад 10 хвилин"
+      );
+    }
+
+    showAlarmCard({
+      active: Boolean(currentAlert),
+      changed: currentAlert?.since || null,
+      updatedAt: data.updatedAt,
+      scope: districtAlert
+        ? DISTRICT_NAME
+        : oblastAlert
+          ? OBLAST_NAME
+          : DISTRICT_NAME
+    });
+  } catch (error) {
+    console.error("Помилка NEPTUN API:", error);
+    showAlarmError();
+  }
+}
+
+updateTrainingCard();
+updateAlarmStatus();
+
+setInterval(updateTrainingCard, 1000);
+setInterval(updateAlarmStatus, 60000);
+</script>
+
+</body>
+</html>
