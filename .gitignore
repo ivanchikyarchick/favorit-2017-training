@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+.venv/
+.env
+favorit.db
+.pytest_cache/
+.ruff_cache/

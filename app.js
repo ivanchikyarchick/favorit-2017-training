@@ -101,6 +101,9 @@ let session = loadSession();
 let currentView = "dashboard";
 let currentTeamId = "team-2017";
 let currentChatId = "c1";
+let serverMode = false;
+let publicConfig = { demo: true, vapidPublicKey: "" };
+let pendingPhone = "";
 
 function loadState() {
   try {
@@ -117,6 +120,45 @@ function loadSession() {
 
 function saveState() { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
 function saveSession() { localStorage.setItem(SESSION_KEY, JSON.stringify(session)); }
+
+async function apiFetch(path, options = {}, authenticated = true) {
+  const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
+  if (authenticated && session?.token) headers.Authorization = `Bearer ${session.token}`;
+  const response = await fetch(path, { ...options, headers });
+  if (response.status === 401 && authenticated) {
+    signOut();
+    throw new Error("Сеанс завершився. Увійдіть знову.");
+  }
+  if (!response.ok) {
+    let message = "Не вдалося виконати дію";
+    try { message = (await response.json()).detail || message; } catch {}
+    throw new Error(message);
+  }
+  return response.status === 204 ? null : response.json();
+}
+
+async function refreshServerState(render = false) {
+  const data = await apiFetch("/api/bootstrap");
+  const { user, ...clubState } = data;
+  state = clubState;
+  session = { ...session, role: user.role, userName: user.name, userId: user.id, phone: user.phone };
+  saveSession();
+  if (!state.teams.some(item => item.id === currentTeamId)) currentTeamId = state.teams[0]?.id || "";
+  if (!state.chats.some(item => item.id === currentChatId)) currentChatId = state.chats.find(item => item.teamId === currentTeamId)?.id || "";
+  if (render) { renderShell(); renderCurrentView(); }
+}
+
+async function runServerMutation(path, options, successMessage) {
+  try {
+    const result = await apiFetch(path, options);
+    await refreshServerState(true);
+    if (successMessage) showToast(successMessage, "success");
+    return result;
+  } catch (error) {
+    showToast(error.message, "error");
+    return false;
+  }
+}
 
 function escapeHtml(value = "") {
   return String(value).replace(/[&<>'"]/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[char]));
@@ -143,9 +185,9 @@ function teamPlayers() { return state.players.filter(player => player.teamId ===
 function teamEvents() { return state.events.filter(event => event.teamId === currentTeamId).sort((a, b) => new Date(a.start) - new Date(b.start)); }
 function upcomingEvents() { return teamEvents().filter(event => new Date(event.start) > new Date()); }
 function nextEvent() { return upcomingEvents()[0] || teamEvents()[0]; }
-function parentPlayer() { return state.players.find(player => player.id === "p1"); }
-function roleName() { return session?.role === "coach" ? "Тренер" : "Мама Максима"; }
-function userName() { return session?.role === "coach" ? "Андрій Савчук" : "Катерина Коваленко"; }
+function parentPlayer() { return state.players[0]; }
+function roleName() { return session?.role === "coach" ? "Тренер" : `Батьки · ${parentPlayer()?.name || "гравець"}`; }
+function userName() { return session?.userName || (session?.role === "coach" ? "Андрій Савчук" : "Катерина Коваленко"); }
 
 function showToast(message, type = "") {
   const toast = document.createElement("div");
@@ -160,9 +202,21 @@ function refreshIcons() {
   if (window.lucide) window.lucide.createIcons({ attrs: { "aria-hidden": "true" } });
 }
 
-function signIn(role) {
+async function signIn(role) {
+  if (serverMode) {
+    try {
+      const result = await apiFetch(`/api/auth/demo/${role}`, { method: "POST" }, false);
+      session = { token: result.token, role: result.user.role, userName: result.user.name, userId: result.user.id };
+      saveSession();
+      await refreshServerState();
+    } catch (error) {
+      showToast(error.message, "error");
+      return;
+    }
+  } else {
   session = { role, phone: role === "coach" ? "+380671234567" : "+380932345678" };
   saveSession();
+  }
   currentTeamId = role === "parent" ? parentPlayer().teamId : currentTeamId;
   $("#authScreen").hidden = true;
   $("#appShell").hidden = false;
@@ -191,6 +245,7 @@ function renderShell() {
   $("#chatBadge").textContent = unread;
   $("#chatBadge").hidden = unread === 0;
   $("#notificationDot").hidden = !state.notifications.some(item => !item.read);
+  $$('[data-switch-role]').forEach(button => button.hidden = serverMode);
   refreshIcons();
 }
 
@@ -442,11 +497,12 @@ function renderRoster() {
       </div>
       <section class="panel" style="padding:0;overflow-x:auto">
         <table class="roster-table">
-          <thead><tr><th>Гравець</th><th>Позиція</th><th>Дата народження</th><th>Батьки</th><th>Телефон</th></tr></thead>
+          <thead><tr><th>Гравець</th><th>Позиція</th><th>Дата народження</th><th>Батьки</th><th>Телефон</th><th></th></tr></thead>
           <tbody>${players.map(player => `
             <tr>
               <td><div class="person"><span class="person-avatar">${initials(player.name)}</span><div><strong>${escapeHtml(player.name)}</strong><small>№ ${player.number}</small></div></div></td>
               <td>${escapeHtml(player.position)}</td><td>${player.birth}</td><td>${escapeHtml(player.parent)}</td><td>${escapeHtml(player.phone)}</td>
+              <td><button class="icon-btn" type="button" data-action="edit-player" data-id="${player.id}" title="Редагувати гравця" aria-label="Редагувати гравця"><i data-lucide="pencil"></i></button></td>
             </tr>`).join("")}</tbody>
         </table>
       </section>
@@ -558,12 +614,13 @@ function openModal({ eyebrow = "", title, body, saveText = "Зберегти", o
   $("#modalTitle").textContent = title;
   $("#modalBody").innerHTML = body;
   $("#modalActions").innerHTML = `${onDelete ? `<button class="btn btn-danger" type="button" id="modalDeleteBtn">Видалити</button>` : ""}<button class="btn btn-secondary" type="button" data-action="close-modal">Скасувати</button><button class="btn btn-primary" type="submit">${saveText}</button>`;
-  $("#modalForm").onsubmit = event => {
+  $("#modalForm").onsubmit = async event => {
     event.preventDefault();
     const formData = new FormData(event.currentTarget);
-    if (onSave(formData) !== false) $("#appModal").close();
+    const result = await onSave(formData);
+    if (result !== false) $("#appModal").close();
   };
-  if (onDelete) $("#modalDeleteBtn").onclick = () => { if (onDelete() !== false) $("#appModal").close(); };
+  if (onDelete) $("#modalDeleteBtn").onclick = async () => { if (await onDelete() !== false) $("#appModal").close(); };
   $("#appModal").showModal();
   refreshIcons();
 }
@@ -590,17 +647,24 @@ function openEventModal(existing = null) {
       <label class="field full"><span>Адреса</span><input class="form-input" name="address" required value="${escapeHtml(existing?.address || "Соборна, 3")}"></label>
       <label class="setting-row full"><span><strong>Опитування про присутність</strong><span>Батьки отримають кнопки «Так» і «Ні»</span></span><span class="switch"><input type="checkbox" name="poll" ${existing?.poll !== false ? "checked" : ""}><span class="switch-track"></span></span></label>
     </div>`,
-    onSave: data => {
+    onSave: async data => {
       const values = Object.fromEntries(data);
       if (new Date(values.end) <= new Date(values.start)) { showToast("Час завершення має бути пізніше початку", "error"); return false; }
       const record = { id: existing?.id || id("event"), teamId: currentTeamId, type: values.type, title: values.title.trim(), start: new Date(values.start).toISOString(), end: new Date(values.end).toISOString(), place: values.place.trim(), address: values.address.trim(), poll: data.has("poll") };
+      if (serverMode) {
+        return runServerMutation(existing ? `/api/events/${existing.id}` : "/api/events", {
+          method: existing ? "PUT" : "POST",
+          body: JSON.stringify({ team_id: currentTeamId, type: record.type, title: record.title, start: record.start, end: record.end, place: record.place, address: record.address, notes: existing?.notes || "", poll: record.poll })
+        }, existing ? "Подію оновлено" : "Подію створено");
+      }
       if (existing) state.events = state.events.map(item => item.id === existing.id ? record : item); else state.events.push(record);
       state.attendance[record.id] ||= {};
       addNotification(existing ? "Подію оновлено" : "Нова подія", `${record.title}: ${eventDate(record.start)}, ${eventTime(record.start)}`, "schedule");
       saveState(); renderCurrentView(); showToast(existing ? "Подію оновлено" : "Подію створено", "success");
     },
-    onDelete: existing ? () => {
+    onDelete: existing ? async () => {
       if (!confirm("Видалити цю подію з розкладу?")) return false;
+      if (serverMode) return runServerMutation(`/api/events/${existing.id}`, { method: "DELETE" }, "Подію видалено");
       state.events = state.events.filter(item => item.id !== existing.id);
       delete state.attendance[existing.id];
       saveState(); renderCurrentView(); showToast("Подію видалено");
@@ -608,24 +672,34 @@ function openEventModal(existing = null) {
   });
 }
 
-function openPlayerModal() {
+function openPlayerModal(existing = null) {
   openModal({
     eyebrow: team().name,
-    title: "Новий гравець",
-    saveText: "Додати до складу",
+    title: existing ? "Редагувати гравця" : "Новий гравець",
+    saveText: existing ? "Зберегти зміни" : "Додати до складу",
     body: `<div class="form-grid">
-      <label class="field full"><span>Ім’я та прізвище дитини</span><input class="form-input" name="name" required></label>
-      <label class="field"><span>Номер</span><input class="form-input" type="number" min="1" max="99" name="number" required></label>
-      <label class="field"><span>Позиція</span><select class="form-select" name="position"><option>Воротар</option><option>Захисник</option><option selected>Півзахисник</option><option>Нападник</option></select></label>
-      <label class="field"><span>Дата народження</span><input class="form-input" name="birth" placeholder="дд.мм.рррр" required></label>
-      <label class="field"><span>Телефон батьків</span><input class="form-input" type="tel" name="phone" required placeholder="+380…"></label>
-      <label class="field full"><span>Ім’я та прізвище когось із батьків</span><input class="form-input" name="parent" required></label>
+      <label class="field full"><span>Ім’я та прізвище дитини</span><input class="form-input" name="name" required value="${escapeHtml(existing?.name || "")}"></label>
+      <label class="field"><span>Номер</span><input class="form-input" type="number" min="1" max="99" name="number" required value="${existing?.number || ""}"></label>
+      <label class="field"><span>Позиція</span><select class="form-select" name="position">${["Воротар", "Захисник", "Півзахисник", "Нападник"].map(position => `<option ${existing?.position === position || (!existing && position === "Півзахисник") ? "selected" : ""}>${position}</option>`).join("")}</select></label>
+      <label class="field"><span>Дата народження</span><input class="form-input" name="birth" placeholder="дд.мм.рррр" required value="${escapeHtml(existing?.birth || "")}"></label>
+      <label class="field"><span>Телефон батьків</span><input class="form-input" type="tel" name="phone" required placeholder="+380…" value="${escapeHtml(existing?.phone || "")}"></label>
+      <label class="field full"><span>Ім’я та прізвище когось із батьків</span><input class="form-input" name="parent" required value="${escapeHtml(existing?.parent || "")}"></label>
     </div>`,
-    onSave: data => {
+    onSave: async data => {
       const values = Object.fromEntries(data);
-      state.players.push({ id: id("player"), teamId: currentTeamId, name: values.name.trim(), number: Number(values.number), position: values.position, birth: values.birth.trim(), parent: values.parent.trim(), phone: values.phone.trim() });
-      saveState(); renderCurrentView(); showToast("Гравця додано до складу", "success");
-    }
+      if (serverMode) {
+        return runServerMutation(existing ? `/api/players/${existing.id}` : "/api/players", { method: existing ? "PUT" : "POST", body: JSON.stringify({ team_id: currentTeamId, name: values.name.trim(), number: Number(values.number), position: values.position, birth: values.birth.trim(), parent: values.parent.trim(), phone: values.phone.trim() }) }, existing ? "Дані гравця оновлено" : "Гравця додано до складу");
+      }
+      const record = { id: existing?.id || id("player"), teamId: currentTeamId, name: values.name.trim(), number: Number(values.number), position: values.position, birth: values.birth.trim(), parent: values.parent.trim(), phone: values.phone.trim() };
+      if (existing) state.players = state.players.map(item => item.id === existing.id ? record : item); else state.players.push(record);
+      saveState(); renderCurrentView(); showToast(existing ? "Дані гравця оновлено" : "Гравця додано до складу", "success");
+    },
+    onDelete: existing ? async () => {
+      if (!confirm("Видалити гравця зі складу?")) return false;
+      if (serverMode) return runServerMutation(`/api/players/${existing.id}`, { method: "DELETE" }, "Гравця видалено зі складу");
+      state.players = state.players.filter(item => item.id !== existing.id);
+      saveState(); renderCurrentView(); showToast("Гравця видалено зі складу");
+    } : null
   });
 }
 
@@ -635,8 +709,13 @@ function openTeamModal() {
     title: "Нова команда",
     saveText: "Створити команду",
     body: `<div class="form-grid"><label class="field full"><span>Назва команди</span><input class="form-input" name="name" required placeholder="Фаворит 2018"></label><label class="field"><span>Рік народження</span><input class="form-input" type="number" name="birthYear" min="2005" max="2022" required></label><label class="field"><span>Тренер</span><input class="form-input" name="coach" value="${escapeHtml(userName())}" required></label></div>`,
-    onSave: data => {
+    onSave: async data => {
       const values = Object.fromEntries(data);
+      if (serverMode) {
+        const result = await runServerMutation("/api/teams", { method: "POST", body: JSON.stringify({ name: values.name.trim(), birthYear: Number(values.birthYear), coach: values.coach.trim() }) }, "Команду створено");
+        if (result) { currentTeamId = result.id; await refreshServerState(true); navigate("roster"); }
+        return result;
+      }
       const newTeam = { id: id("team"), name: values.name.trim(), birthYear: Number(values.birthYear), coach: values.coach.trim(), color: "#225ad6" };
       state.teams.push(newTeam);
       state.chats.push({ id: id("chat"), teamId: newTeam.id, title: `${newTeam.name} — батьки`, kind: "team", unread: 0 });
@@ -658,15 +737,22 @@ function openTournamentModal(existing = null) {
       <label class="field full"><span>Місце</span><input class="form-input" name="place" required value="${escapeHtml(existing?.place || "Стадіон «Колос»")}"></label>
       <label class="field full"><span>Нотатка для батьків</span><textarea class="form-textarea" name="note">${escapeHtml(existing?.note || "")}</textarea></label>
     </div>`,
-    onSave: data => {
+    onSave: async data => {
       const values = Object.fromEntries(data);
       const record = { id: existing?.id || id("tournament"), teamId: currentTeamId, title: values.title.trim(), date: new Date(values.date).toISOString(), place: values.place.trim(), status: values.status, note: values.note.trim() };
+      if (serverMode) {
+        return runServerMutation(existing ? `/api/tournaments/${existing.id}` : "/api/tournaments", {
+          method: existing ? "PUT" : "POST",
+          body: JSON.stringify({ team_id: currentTeamId, title: record.title, date: record.date, place: record.place, status: record.status, note: record.note })
+        }, existing ? "Турнір оновлено" : "Турнір додано");
+      }
       if (existing) state.tournaments = state.tournaments.map(item => item.id === existing.id ? record : item); else state.tournaments.push(record);
       addNotification(existing ? "Турнір оновлено" : "Додано турнір", `${record.title}: ${eventDate(record.date)}`, "schedule");
       saveState(); renderCurrentView(); showToast(existing ? "Турнір оновлено" : "Турнір додано", "success");
     },
-    onDelete: existing ? () => {
+    onDelete: existing ? async () => {
       if (!confirm("Видалити цей турнір?")) return false;
+      if (serverMode) return runServerMutation(`/api/tournaments/${existing.id}`, { method: "DELETE" }, "Турнір видалено");
       state.tournaments = state.tournaments.filter(item => item.id !== existing.id);
       saveState(); renderCurrentView(); showToast("Турнір видалено");
     } : null
@@ -677,16 +763,27 @@ function addNotification(title, text, type = "schedule") {
   state.notifications.unshift({ id: id("notice"), title, text, type, time: new Date().toISOString(), read: false });
 }
 
-function answerAttendance(eventId, value) {
+async function answerAttendance(eventId, value) {
+  if (serverMode) return runServerMutation(`/api/events/${eventId}/attendance`, { method: "PUT", body: JSON.stringify({ value, player_id: parentPlayer().id }) }, "Відповідь збережено");
   state.attendance[eventId] ||= {};
   state.attendance[eventId][parentPlayer().id] = value;
   addNotification("Відповідь збережено", value === "yes" ? "Максим буде на занятті." : "Максим не буде на занятті.", "poll");
   saveState(); renderShell(); renderCurrentView(); showToast("Відповідь збережено", "success");
 }
 
-function sendReminders(test = false) {
+async function sendReminders(test = false) {
   const event = nextEvent();
   if (!event) return showToast("Немає найближчої події", "error");
+  if (serverMode && test) {
+    await showBrowserNotification("ФК «Фаворит»", `Чи буде ${parentPlayer()?.name || "дитина"} на найближчому тренуванні?`);
+    showToast("Тестове нагадування надіслано", "success");
+    return true;
+  }
+  if (serverMode && !test) {
+    const result = await runServerMutation(`/api/events/${event.id}/remind`, { method: "POST" });
+    if (result) showToast(`Нагадування надіслано: ${result.sent}`, "success");
+    return result;
+  }
   const summary = attendanceSummary(event.id);
   addNotification("Нагадування про тренування", `Потрібна відповідь щодо ${eventDate(event.start)}.`, "poll");
   state.settings.lastReminder = Date.now();
@@ -706,10 +803,26 @@ async function showBrowserNotification(title, body) {
 async function enableNotifications() {
   if (!("Notification" in window)) return showToast("Цей браузер не підтримує сповіщення", "error");
   const permission = await Notification.requestPermission();
+  if (permission === "granted" && serverMode && publicConfig.vapidPublicKey && "serviceWorker" in navigator) {
+    try {
+      const registration = await navigator.serviceWorker.ready;
+      const subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(publicConfig.vapidPublicKey) });
+      await apiFetch("/api/push-subscriptions", { method: "POST", body: JSON.stringify(subscription.toJSON()) });
+    } catch (error) {
+      return showToast(error.message || "Не вдалося підключити push-сповіщення", "error");
+    }
+  }
   showToast(permission === "granted" ? "Сповіщення увімкнено" : "Дозвіл на сповіщення не надано", permission === "granted" ? "success" : "error");
 }
 
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  return Uint8Array.from(atob(base64), char => char.charCodeAt(0));
+}
+
 function checkAttendanceReminders() {
+  if (serverMode) return;
   if (!session || session.role !== "parent" || !state.settings.attendanceReminders) return;
   const event = upcomingEvents().find(item => item.poll && new Date(item.start).getTime() - Date.now() < 48 * 60 * 60 * 1000);
   if (!event || state.attendance[event.id]?.[parentPlayer().id]) return;
@@ -720,18 +833,25 @@ function checkAttendanceReminders() {
   showBrowserNotification("ФК «Фаворит»", "Підтвердьте участь Максима в найближчому тренуванні.");
 }
 
-function sendChatMessage(text) {
+async function sendChatMessage(text) {
   const value = text.trim();
   if (!value || !currentChatId) return;
+  if (serverMode) return runServerMutation(`/api/chats/${currentChatId}/messages`, { method: "POST", body: JSON.stringify({ text: value }) });
   state.messages[currentChatId] ||= [];
   state.messages[currentChatId].push({ id: id("message"), author: userName(), role: session.role, text: value, time: new Date().toLocaleTimeString("uk-UA", { hour: "2-digit", minute: "2-digit" }) });
   saveState(); renderCurrentView();
 }
 
-function createChatPoll() {
+async function createChatPoll() {
   const event = nextEvent();
   const teamChat = state.chats.find(chat => chat.teamId === currentTeamId && chat.kind === "team");
   if (!event || !teamChat) return showToast("Спочатку створіть подію та командний чат", "error");
+  if (serverMode) {
+    currentChatId = teamChat.id;
+    const result = await runServerMutation(`/api/chats/${teamChat.id}/poll`, { method: "POST", body: JSON.stringify({ event_id: event.id }) }, "Опитування надіслано в командний чат");
+    if (result) navigate("chats");
+    return result;
+  }
   state.messages[teamChat.id] ||= [];
   state.messages[teamChat.id].push({ id: id("message"), author: userName(), role: "coach", text: `Чи буде ваша дитина на події «${event.title}» ${eventDate(event.start)} о ${eventTime(event.start)}?`, time: new Date().toLocaleTimeString("uk-UA", { hour: "2-digit", minute: "2-digit" }), poll: true, eventId: event.id });
   state.attendance[event.id] ||= {};
@@ -762,7 +882,7 @@ async function updateAlarmStatus() {
   }
 }
 
-document.addEventListener("click", event => {
+document.addEventListener("click", async event => {
   const nav = event.target.closest("[data-nav]");
   if (nav && session) { event.preventDefault(); navigate(nav.dataset.nav); return; }
 
@@ -771,6 +891,7 @@ document.addEventListener("click", event => {
 
   const role = event.target.closest("[data-switch-role]");
   if (role) {
+    if (serverMode) return;
     session.role = role.dataset.switchRole; saveSession(); $("#accountMenu").hidden = true;
     if (session.role === "parent") currentTeamId = parentPlayer().teamId;
     renderShell(); navigate("dashboard"); showToast(`Відкрито: ${roleName()}`); return;
@@ -781,24 +902,31 @@ document.addEventListener("click", event => {
   const name = action.dataset.action;
   if (name === "close-modal") $("#appModal").close();
   if (name === "answer") answerAttendance(action.dataset.event, action.dataset.value);
-  if (name === "change-answer") { delete state.attendance[action.dataset.event][parentPlayer().id]; saveState(); renderCurrentView(); }
+  if (name === "change-answer") {
+    if (serverMode) await runServerMutation(`/api/events/${action.dataset.event}/attendance?player_id=${parentPlayer().id}`, { method: "DELETE" });
+    else { delete state.attendance[action.dataset.event][parentPlayer().id]; saveState(); renderCurrentView(); }
+  }
   if (name === "new-event") openEventModal();
   if (name === "edit-event") openEventModal(state.events.find(item => item.id === action.dataset.id));
   if (name === "new-player") openPlayerModal();
+  if (name === "edit-player") openPlayerModal(state.players.find(item => item.id === action.dataset.id));
   if (name === "new-team") openTeamModal();
   if (name === "new-tournament") openTournamentModal();
   if (name === "edit-tournament") openTournamentModal(state.tournaments.find(item => item.id === action.dataset.id));
   if (name === "send-reminders") sendReminders();
   if (name === "chat-poll") createChatPoll();
-  if (name === "open-coach-chat") { currentChatId = "c2"; navigate("chats"); }
-  if (name === "select-chat") { currentChatId = action.dataset.id; const chat = state.chats.find(item => item.id === currentChatId); if (chat) chat.unread = 0; saveState(); renderShell(); renderCurrentView(); }
+  if (name === "open-coach-chat") { currentChatId = state.chats.find(chat => chat.teamId === currentTeamId && chat.kind === "direct")?.id || state.chats[0]?.id; navigate("chats"); }
+  if (name === "select-chat") { currentChatId = action.dataset.id; const chat = state.chats.find(item => item.id === currentChatId); if (chat) chat.unread = 0; if (!serverMode) saveState(); renderShell(); renderCurrentView(); }
   if (name === "go-to-poll") navigate("dashboard");
-  if (name === "read-all") { state.notifications.forEach(item => item.read = true); saveState(); renderShell(); renderCurrentView(); }
+  if (name === "read-all") {
+    if (serverMode) await runServerMutation("/api/notifications/read-all", { method: "POST" });
+    else { state.notifications.forEach(item => item.read = true); saveState(); renderShell(); renderCurrentView(); }
+  }
   if (name === "enable-notifications") enableNotifications();
   if (name === "test-reminder") sendReminders(true);
 });
 
-document.addEventListener("change", event => {
+document.addEventListener("change", async event => {
   if (event.target.id === "teamSelect") {
     currentTeamId = event.target.value;
     currentChatId = state.chats.find(chat => chat.teamId === currentTeamId)?.id;
@@ -806,7 +934,8 @@ document.addEventListener("change", event => {
   }
   if (event.target.matches("[data-setting]")) {
     state.settings[event.target.dataset.setting] = event.target.checked;
-    saveState(); showToast("Налаштування збережено", "success");
+    if (serverMode) await runServerMutation("/api/settings", { method: "PATCH", body: JSON.stringify({ [event.target.dataset.setting]: event.target.checked }) }, "Налаштування збережено");
+    else { saveState(); showToast("Налаштування збережено", "success"); }
   }
 });
 
@@ -824,16 +953,43 @@ $("#accountBtn").addEventListener("click", () => {
 $("#notificationBtn").addEventListener("click", () => navigate("notifications"));
 $("#logoutBtn").addEventListener("click", signOut);
 
-$("#sendCodeBtn").addEventListener("click", () => {
+$("#sendCodeBtn").addEventListener("click", async () => {
   const digits = $("#phoneInput").value.replace(/\D/g, "");
   if (digits.length < 9) { $("#authError").textContent = "Введіть повний номер телефону."; return; }
   $("#authError").textContent = "";
+  pendingPhone = $("#phoneInput").value;
+  if (serverMode) {
+    try {
+      const result = await apiFetch("/api/auth/request-code", { method: "POST", body: JSON.stringify({ phone: pendingPhone }) }, false);
+      $("#codeHelp").innerHTML = result.devCode ? `Локальний код: <strong>${escapeHtml(result.devCode)}</strong>` : "Код надіслано в SMS. Він діє 10 хвилин.";
+    } catch (error) {
+      $("#authError").textContent = error.message;
+      return;
+    }
+  } else {
+    $("#codeHelp").innerHTML = "Демо-код: <strong>1111</strong>";
+  }
   $("#phoneStep").hidden = true;
   $("#codeStep").hidden = false;
   $("#codeInput").focus();
 });
 $("#backToPhoneBtn").addEventListener("click", () => { $("#phoneStep").hidden = false; $("#codeStep").hidden = true; });
-$("#verifyCodeBtn").addEventListener("click", () => {
+$("#verifyCodeBtn").addEventListener("click", async () => {
+  if (serverMode) {
+    try {
+      const result = await apiFetch("/api/auth/verify", { method: "POST", body: JSON.stringify({ phone: pendingPhone, code: $("#codeInput").value }) }, false);
+      session = { token: result.token, role: result.user.role, userName: result.user.name, userId: result.user.id };
+      saveSession();
+      await refreshServerState();
+      $("#authScreen").hidden = true;
+      $("#appShell").hidden = false;
+      currentTeamId = state.teams[0]?.id || "";
+      renderShell(); navigate("dashboard");
+    } catch (error) {
+      $("#authError").textContent = error.message;
+    }
+    return;
+  }
   if ($("#codeInput").value !== "1111") { $("#authError").textContent = "Для демоверсії введіть код 1111."; return; }
   const digits = $("#phoneInput").value.replace(/\D/g, "");
   signIn(digits.endsWith("671234567") ? "coach" : "parent");
@@ -847,13 +1003,40 @@ window.addEventListener("click", event => {
 if ("serviceWorker" in navigator && location.protocol !== "file:") navigator.serviceWorker.register("./sw.js").catch(() => {});
 setInterval(checkAttendanceReminders, 60 * 1000);
 setInterval(() => { if (currentView === "dashboard" && session) updateAlarmStatus(); }, 60 * 1000);
+setInterval(async () => {
+  if (!serverMode || !session?.token || document.hidden || $("#appModal").open) return;
+  try { await refreshServerState(true); } catch {}
+}, 15000);
 
-if (session) {
-  $("#authScreen").hidden = true;
-  $("#appShell").hidden = false;
-  currentTeamId = session.role === "parent" ? parentPlayer().teamId : currentTeamId;
-  renderShell();
-  navigate(location.hash.slice(1) || "dashboard");
-} else {
-  refreshIcons();
+async function initialize() {
+  try {
+    publicConfig = await apiFetch("/api/config", {}, false);
+    serverMode = Boolean(publicConfig.server);
+  } catch {
+    serverMode = false;
+  }
+  $("#demoAccess").hidden = serverMode && !publicConfig.demo;
+  $("#demoNote").textContent = serverMode
+    ? (publicConfig.demo ? "Тестовий вхід увімкнено адміністратором." : "Вхід доступний лише для номерів, доданих тренером.")
+    : "Статична демоверсія: дані зберігаються лише на цьому пристрої.";
+
+  if (session && (!serverMode || session.token)) {
+    if (serverMode) {
+      try { await refreshServerState(); } catch { session = null; }
+    }
+  } else if (serverMode) {
+    session = null;
+  }
+
+  if (session) {
+    $("#authScreen").hidden = true;
+    $("#appShell").hidden = false;
+    currentTeamId = session.role === "parent" ? parentPlayer().teamId : (state.teams[0]?.id || currentTeamId);
+    renderShell();
+    navigate(location.hash.slice(1) || "dashboard");
+  } else {
+    refreshIcons();
+  }
 }
+
+initialize();

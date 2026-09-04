@@ -1,4 +1,4 @@
-const CACHE = "favorit-platform-v2";
+const CACHE = "favorit-platform-v3";
 const CORE = ["./", "./index.html", "./styles.css", "./app.js", "./logo.png", "./image.png", "./manifest.webmanifest"];
 
 self.addEventListener("install", event => {
@@ -28,5 +28,20 @@ self.addEventListener("fetch", event => {
 
 self.addEventListener("notificationclick", event => {
   event.notification.close();
-  event.waitUntil(clients.openWindow("./#dashboard"));
+  const url = event.notification.data?.url || "./#dashboard";
+  event.waitUntil(clients.openWindow(url));
+});
+
+self.addEventListener("push", event => {
+  let payload = { title: "ФК «Фаворит»", body: "У вас нове повідомлення", url: "./#notifications" };
+  try { payload = { ...payload, ...event.data.json() }; } catch {}
+  event.waitUntil(
+    self.registration.showNotification(payload.title, {
+      body: payload.body,
+      icon: "./logo.png",
+      badge: "./logo.png",
+      tag: "favorit-club",
+      data: { url: payload.url }
+    })
+  );
 });

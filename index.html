@@ -37,19 +37,19 @@
       <div id="codeStep" hidden>
         <button class="text-btn back-btn" id="backToPhoneBtn" type="button">← Змінити номер</button>
         <h2>Підтвердження</h2>
-        <p class="auth-copy">Демо-код для цієї версії: <strong>1111</strong></p>
+        <p class="auth-copy" id="codeHelp">Введіть код із SMS.</p>
         <label class="field-label" for="codeInput">Код із SMS</label>
         <input class="code-input" id="codeInput" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="4" placeholder="••••">
         <button class="btn btn-primary btn-block" id="verifyCodeBtn" type="button">Увійти</button>
       </div>
 
-      <div class="demo-access">
+      <div class="demo-access" id="demoAccess">
         <span>Швидкий перегляд</span>
         <button class="btn btn-secondary" type="button" data-demo-role="parent">Кабінет батьків</button>
         <button class="btn btn-secondary" type="button" data-demo-role="coach">Кабінет тренера</button>
       </div>
       <p class="form-error" id="authError" role="alert"></p>
-      <p class="demo-note">Це функціональний прототип. Реальне надсилання SMS підключається окремо.</p>
+      <p class="demo-note" id="demoNote">Для локального перегляду використовується демо-режим.</p>
     </div>
   </section>
 

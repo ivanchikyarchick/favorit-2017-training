@@ -1,0 +1,1 @@
+"""Favorit club platform backend."""
