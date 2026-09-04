@@ -104,6 +104,7 @@ let currentChatId = "c1";
 let serverMode = false;
 let publicConfig = { demo: true, vapidPublicKey: "" };
 let pendingPhone = "";
+let deferredInstallPrompt = null;
 
 function loadState() {
   try {
@@ -594,9 +595,10 @@ function renderNotifications() {
           ${settingSwitch("scheduleChanges", "Зміни розкладу", "Повідомляти про перенесення й скасування")}
           ${settingSwitch("chatMessages", "Нові повідомлення", "Сповіщати про повідомлення тренера")}
           <button class="btn btn-primary btn-block" type="button" data-action="enable-notifications"><i data-lucide="bell-ring"></i> Увімкнути на пристрої</button>
+          <button class="btn btn-secondary btn-block" type="button" data-action="install-app"><i data-lucide="smartphone"></i> Встановити на телефон</button>
           <button class="btn btn-secondary btn-block" type="button" data-action="test-reminder"><i data-lucide="send"></i> Перевірити нагадування</button>
         </section>
-        <section class="panel"><p class="small muted" style="margin:0">У демоверсії періодичні нагадування працюють, поки сайт відкритий. Для гарантованих повідомлень на закритий телефон потрібен сервер push-сповіщень.</p></section>
+        <section class="panel"><p class="small muted" style="margin:0">На iPhone спочатку додайте платформу на екран «Додому», відкрийте її з іконки та увімкніть сповіщення. На Android достатньо дозволити сповіщення у браузері.</p></section>
       </aside>
     </div>`;
 }
@@ -815,6 +817,17 @@ async function enableNotifications() {
   showToast(permission === "granted" ? "Сповіщення увімкнено" : "Дозвіл на сповіщення не надано", permission === "granted" ? "success" : "error");
 }
 
+async function installApp() {
+  if (deferredInstallPrompt) {
+    deferredInstallPrompt.prompt();
+    await deferredInstallPrompt.userChoice;
+    deferredInstallPrompt = null;
+    return;
+  }
+  const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  showToast(isIos ? "Safari → Поділитися → На екран «Додому», потім відкрийте платформу з іконки" : "У меню браузера виберіть «Встановити застосунок» або «Додати на головний екран»");
+}
+
 function urlBase64ToUint8Array(base64String) {
   const padding = "=".repeat((4 - base64String.length % 4) % 4);
   const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
@@ -923,6 +936,7 @@ document.addEventListener("click", async event => {
     else { state.notifications.forEach(item => item.read = true); saveState(); renderShell(); renderCurrentView(); }
   }
   if (name === "enable-notifications") enableNotifications();
+  if (name === "install-app") installApp();
   if (name === "test-reminder") sendReminders(true);
 });
 
@@ -996,6 +1010,10 @@ $("#verifyCodeBtn").addEventListener("click", async () => {
 });
 
 window.addEventListener("hashchange", () => { if (session) navigate(location.hash.slice(1)); });
+window.addEventListener("beforeinstallprompt", event => {
+  event.preventDefault();
+  deferredInstallPrompt = event;
+});
 window.addEventListener("click", event => {
   if (!event.target.closest("#accountBtn") && !event.target.closest("#accountMenu")) $("#accountMenu").hidden = true;
 });

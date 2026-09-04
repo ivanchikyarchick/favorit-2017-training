@@ -1,6 +1,7 @@
 {
   "name": "ФК Фаворит — клубна платформа",
   "short_name": "Фаворит",
+  "id": "favorit-club-platform",
   "description": "Тренування, склад, відвідування, чати й турніри ФК Фаворит.",
   "start_url": "./",
   "display": "standalone",
