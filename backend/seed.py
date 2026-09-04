@@ -27,7 +27,9 @@ def seed_database(db: Session) -> None:
     if db.query(User).count() or os.getenv("SEED_DEMO_DATA", "true").lower() != "true":
         return
 
-    coach = User(phone="+380671234567", name="Андрій Савчук", role="coach")
+    coach_phone = os.getenv("INITIAL_COACH_PHONE", "+380671234567").strip()
+    coach_name = os.getenv("INITIAL_COACH_NAME", "Андрій Савчук").strip()
+    coach = User(phone=coach_phone, name=coach_name, role="coach")
     parent_specs = [
         ("+380932345678", "Катерина Коваленко"),
         ("+380674121034", "Олена Бондар"),
