@@ -41,7 +41,7 @@ python -m venv .venv
 5. Для push-сповіщень виконайте `python scripts/generate_vapid_keys.py` і додайте отримані `VAPID_PRIVATE_KEY` та `VAPID_PUBLIC_KEY` у Railway.
 6. Для бойового режиму задайте `APP_ENV=production` та `ENABLE_DEMO=false`.
 
-Railway автоматично використає `railway.toml`, запустить FastAPI й перевірить `/api/health`.
+Railway автоматично знайде `Dockerfile` і запустить FastAPI. У налаштуваннях сервісу вкажіть healthcheck path `/api/health`.
 
 ## Перевірка
 
