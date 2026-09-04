@@ -1,0 +1,17 @@
+{
+  "name": "ФК Фаворит — клубна платформа",
+  "short_name": "Фаворит",
+  "description": "Тренування, склад, відвідування, чати й турніри ФК Фаворит.",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#f4f6f8",
+  "theme_color": "#101d36",
+  "icons": [
+    {
+      "src": "./logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
