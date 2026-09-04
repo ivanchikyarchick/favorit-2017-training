@@ -12,5 +12,5 @@
 
 ## Атрибуція
 
-Ідея та частина коду взяті за основу з репозиторію [Posterminal/favorit-2016-training](https://github.com/Posterminal/favorit-2016-training).
+Код взятий за основу з репозиторію [Posterminal/favorit-2016-training](https://github.com/Posterminal/favorit-2016-training).
 
