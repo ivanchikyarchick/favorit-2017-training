@@ -26,6 +26,7 @@ from .models import (
     User,
 )
 from .reminders import run_attendance_reminders, send_event_reminders_now
+from .sms import SmsDeliveryError, send_login_code
 from .schemas import (
     AttendancePayload,
     EventPayload,
@@ -144,49 +145,6 @@ def notify_team(db: Session, team_id: int, title: str, text: str, kind: str = "s
         db.add(Notification(user_id=guardian.id, type=kind, title=title, text=text))
 
 
-def send_sms(phone: str, code: str) -> None:
-    account_sid = os.getenv("TWILIO_ACCOUNT_SID")
-    auth_token = os.getenv("TWILIO_AUTH_TOKEN")
-    from_number = os.getenv("TWILIO_FROM_NUMBER")
-    messaging_service = os.getenv("TWILIO_MESSAGING_SERVICE_SID")
-    if not account_sid or not auth_token or (not from_number and not messaging_service):
-        if APP_ENV == "production":
-            raise HTTPException(status_code=503, detail="SMS-сервіс ще не налаштований")
-        return
-    from twilio.rest import Client
-
-    kwargs = {"body": f"Код входу до ФК «Фаворит»: {code}", "to": phone}
-    if messaging_service:
-        kwargs["messaging_service_sid"] = messaging_service
-    else:
-        kwargs["from_"] = from_number
-    Client(account_sid, auth_token).messages.create(**kwargs)
-
-
-def send_verify_sms(phone: str) -> bool:
-    account_sid = os.getenv("TWILIO_ACCOUNT_SID")
-    auth_token = os.getenv("TWILIO_AUTH_TOKEN")
-    service_sid = os.getenv("TWILIO_VERIFY_SERVICE_SID")
-    if not account_sid or not auth_token or not service_sid:
-        return False
-    from twilio.rest import Client
-
-    Client(account_sid, auth_token).verify.v2.services(service_sid).verifications.create(to=phone, channel="sms")
-    return True
-
-
-def check_verify_sms(phone: str, code: str) -> bool:
-    account_sid = os.getenv("TWILIO_ACCOUNT_SID")
-    auth_token = os.getenv("TWILIO_AUTH_TOKEN")
-    service_sid = os.getenv("TWILIO_VERIFY_SERVICE_SID")
-    if not account_sid or not auth_token or not service_sid:
-        return False
-    from twilio.rest import Client
-
-    result = Client(account_sid, auth_token).verify.v2.services(service_sid).verification_checks.create(to=phone, code=code)
-    return result.status == "approved"
-
-
 @app.get("/api/health")
 def health():
     return {"status": "ok", "service": "favorit-platform"}
@@ -211,20 +169,18 @@ def request_code(payload: PhoneRequest, db: Session = Depends(get_db)):
     if db.query(func.count(OtpCode.id)).filter(OtpCode.phone == phone, OtpCode.created_at > hour_ago).scalar() >= 5:
         raise HTTPException(status_code=429, detail="Забагато запитів. Спробуйте пізніше")
 
-    uses_twilio_verify = bool(os.getenv("TWILIO_VERIFY_SERVICE_SID"))
-    code = generate_code() if not uses_twilio_verify else ""
-    otp = OtpCode(phone=phone, code_hash="twilio-verify" if uses_twilio_verify else "pending", expires_at=datetime.utcnow() + timedelta(minutes=10))
+    code = generate_code()
+    otp = OtpCode(phone=phone, code_hash="pending", expires_at=datetime.utcnow() + timedelta(minutes=10))
     db.add(otp)
     db.flush()
-    if uses_twilio_verify:
-        if not send_verify_sms(phone):
-            raise HTTPException(status_code=503, detail="Twilio Verify ще не налаштований")
-    else:
-        otp.code_hash = code_hash(phone, code, otp.id)
-        send_sms(phone, code)
+    otp.code_hash = code_hash(phone, code, otp.id)
+    try:
+        send_login_code(phone, code, otp.id)
+    except SmsDeliveryError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     db.commit()
     result = {"ok": True, "expiresIn": 600}
-    if APP_ENV != "production" and not uses_twilio_verify:
+    if APP_ENV != "production":
         result["devCode"] = code
     return result
 
@@ -241,7 +197,7 @@ def verify_code(payload: VerifyRequest, db: Session = Depends(get_db)):
     if not otp or otp.expires_at < datetime.utcnow() or otp.attempts >= 5:
         raise HTTPException(status_code=400, detail="Код недійсний або вже прострочений")
     otp.attempts += 1
-    approved = check_verify_sms(phone, payload.code) if otp.code_hash == "twilio-verify" else __import__("hmac").compare_digest(otp.code_hash, code_hash(phone, payload.code, otp.id))
+    approved = __import__("hmac").compare_digest(otp.code_hash, code_hash(phone, payload.code, otp.id))
     if not approved:
         db.commit()
         raise HTTPException(status_code=400, detail="Неправильний код")

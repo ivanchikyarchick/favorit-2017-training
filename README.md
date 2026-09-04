@@ -37,7 +37,7 @@ python -m venv .venv
 1. Створіть Railway-проєкт із цього GitHub-репозиторію.
 2. Додайте PostgreSQL — Railway передасть застосунку `DATABASE_URL`.
 3. Додайте змінні з `.env.example`; обов’язково задайте довгий випадковий `JWT_SECRET`.
-4. Для SMS створіть Twilio Verify Service і додайте `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` та `TWILIO_VERIFY_SERVICE_SID`.
+4. Для SMS зареєструйтеся в TurboSMS, увімкніть HTTP API та додайте `TURBOSMS_TOKEN` і `TURBOSMS_SENDER`.
 5. Для push-сповіщень виконайте `python scripts/generate_vapid_keys.py` і додайте отримані `VAPID_PRIVATE_KEY` та `VAPID_PUBLIC_KEY` у Railway.
 6. Для бойового режиму задайте `APP_ENV=production` та `ENABLE_DEMO=false`.
 
