@@ -182,6 +182,7 @@ function eventTime(value) {
 }
 
 function team() { return state.teams.find(item => item.id === currentTeamId) || state.teams[0]; }
+function hasTeam() { return state.teams.length > 0; }
 function teamPlayers() { return state.players.filter(player => player.teamId === currentTeamId); }
 function teamEvents() { return state.events.filter(event => event.teamId === currentTeamId).sort((a, b) => new Date(a.start) - new Date(b.start)); }
 function upcomingEvents() { return teamEvents().filter(event => new Date(event.start) > new Date()); }
@@ -237,11 +238,14 @@ function signOut() {
 
 function renderShell() {
   const visibleTeams = session.role === "coach" ? state.teams : state.teams.filter(item => item.id === parentPlayer().teamId);
-  $("#teamSelect").innerHTML = visibleTeams.map(item => `<option value="${item.id}" ${item.id === currentTeamId ? "selected" : ""}>${escapeHtml(item.name)}</option>`).join("");
+  $("#teamSelect").innerHTML = visibleTeams.length
+    ? visibleTeams.map(item => `<option value="${item.id}" ${item.id === currentTeamId ? "selected" : ""}>${escapeHtml(item.name)}</option>`).join("")
+    : `<option value="">Команда ще не створена</option>`;
+  $("#teamSelect").disabled = visibleTeams.length === 0;
   $("#userName").textContent = userName();
   $("#userRole").textContent = roleName();
   $("#userInitials").textContent = initials(userName());
-  $("#pageEyebrow").textContent = team().name;
+  $("#pageEyebrow").textContent = team()?.name || (session.role === "coach" ? "Налаштування клубу" : "Клуб");
   const unread = state.chats.filter(chat => chat.teamId === currentTeamId).reduce((sum, chat) => sum + chat.unread, 0);
   $("#chatBadge").textContent = unread;
   $("#chatBadge").hidden = unread === 0;
@@ -254,13 +258,20 @@ function navigate(view) {
   currentView = VIEW_TITLES[view] ? view : "dashboard";
   if (location.hash !== `#${currentView}`) history.replaceState(null, "", `#${currentView}`);
   $("#pageTitle").textContent = VIEW_TITLES[currentView];
-  $("#pageEyebrow").textContent = team().name;
+  $("#pageEyebrow").textContent = team()?.name || (session?.role === "coach" ? "Налаштування клубу" : "Клуб");
   $$(`[data-nav]`).forEach(button => button.classList.toggle("active", button.dataset.nav === currentView));
   renderCurrentView();
   $("#content").focus({ preventScroll: true });
 }
 
 function renderCurrentView() {
+  if (!hasTeam()) {
+    $("#content").innerHTML = session?.role === "coach"
+      ? emptyState("shield-plus", "Створіть першу команду", "Додайте команду, щоб налаштувати склад, розклад, чати та турніри клубу.", "new-team", "Створити першу команду")
+      : emptyState("users-round", "Команду ще не підключено", "Попросіть тренера додати ваш номер телефону до складу команди.");
+    refreshIcons();
+    return;
+  }
   const renderers = {
     dashboard: renderDashboard,
     schedule: renderSchedule,
@@ -608,8 +619,8 @@ function settingSwitch(key, title, text) {
   return `<label class="setting-row"><span><strong>${title}</strong><span>${text}</span></span><span class="switch"><input type="checkbox" data-setting="${key}" ${state.settings[key] ? "checked" : ""}><span class="switch-track"></span></span></label>`;
 }
 
-function emptyState(icon, title, text, action = "") {
-  return `<div class="empty-state"><i data-lucide="${icon}"></i><h3>${title}</h3><p>${text}</p>${action ? `<button class="btn btn-primary" type="button" data-action="${action}">Додати</button>` : ""}</div>`;
+function emptyState(icon, title, text, action = "", actionLabel = "Додати") {
+  return `<div class="empty-state"><i data-lucide="${icon}"></i><h3>${title}</h3><p>${text}</p>${action ? `<button class="btn btn-primary" type="button" data-action="${action}">${actionLabel}</button>` : ""}</div>`;
 }
 
 function openModal({ eyebrow = "", title, body, saveText = "Зберегти", onSave, onDelete }) {
