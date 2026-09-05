@@ -170,6 +170,37 @@ def test_telegram_binding_and_login(monkeypatch):
         assert client.post("/api/auth/verify", json={"phone": "0501112299", "code": code}).status_code == 400
 
 
+def test_new_telegram_user_can_choose_coach_role(monkeypatch):
+    from backend import telegram, main
+    from backend.database import SessionLocal
+    from backend.models import PendingTelegram, TelegramAccount, User
+
+    sent = []
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-only")
+    monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "y" * 32)
+    monkeypatch.setattr(telegram, "telegram_call", lambda method, payload: sent.append((method, payload)))
+    monkeypatch.setattr(main, "telegram_call", lambda method, payload: sent.append((method, payload)))
+    with TestClient(app) as client:
+        headers = {"X-Telegram-Bot-Api-Secret-Token": "y" * 32}
+        message = {"chat": {"id": 900002, "type": "private"}, "from": {"id": 900002, "first_name": "Новий", "last_name": "Тренер"},
+                   "contact": {"user_id": 900002, "phone_number": "380501113344"}}
+        response = client.post("/api/telegram/webhook", headers=headers, json={"message": message})
+        assert response.status_code == 200
+        with SessionLocal() as db:
+            assert db.get(PendingTelegram, "900002") is not None
+        callback = {"id": "callback-1", "from": {"id": 900002}, "data": "register:coach",
+                    "message": {"chat": {"id": 900002, "type": "private"}}}
+        assert client.post("/api/telegram/webhook", headers=headers, json={"callback_query": callback}).status_code == 200
+        with SessionLocal() as db:
+            user = db.query(User).filter(User.phone == "+380501113344").one()
+            assert user.role == "coach"
+            assert db.get(PendingTelegram, "900002") is None
+            assert db.query(TelegramAccount).filter(TelegramAccount.user_id == user.id).one().telegram_id == "900002"
+        login = client.post("/api/auth/request-code", json={"phone": "0501113344"})
+        assert login.status_code == 200
+        assert any(method == "sendMessage" and payload.get("chat_id") == "900002" for method, payload in sent)
+
+
 def teardown_module():
     engine.dispose()
     TEST_DB.unlink(missing_ok=True)

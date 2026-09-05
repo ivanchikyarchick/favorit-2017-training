@@ -157,7 +157,7 @@ def health():
 @app.get("/api/config")
 def public_config():
     return {"server": True, "demo": ENABLE_DEMO, "vapidPublicKey": VAPID_PUBLIC_KEY,
-            "telegramBot": os.getenv("TELEGRAM_BOT_USERNAME", "").lstrip("@")}
+            "telegramBot": os.getenv("TELEGRAM_BOT_USERNAME", "sms_favoryt_bot").lstrip("@")}
 
 
 @app.post("/api/auth/request-code")

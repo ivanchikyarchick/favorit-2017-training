@@ -48,6 +48,14 @@ class TelegramAccount(Base):
     phone = Column(String(24), nullable=False)
 
 
+class PendingTelegram(Base):
+    __tablename__ = "pending_telegram"
+    telegram_id = Column(String(24), primary_key=True)
+    phone = Column(String(24), nullable=False)
+    name = Column(String(120), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
 class Team(Base):
     __tablename__ = "teams"
 
