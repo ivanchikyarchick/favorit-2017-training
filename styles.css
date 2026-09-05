@@ -32,6 +32,7 @@ body {
 }
 button, input, select, textarea { font: inherit; }
 button, select { cursor: pointer; }
+button:disabled, select:disabled, input:disabled { cursor: wait; opacity: 0.62; }
 button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, a:focus-visible {
   outline: 3px solid rgba(34, 90, 214, 0.3);
   outline-offset: 2px;

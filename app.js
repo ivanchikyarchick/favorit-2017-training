@@ -104,6 +104,8 @@ let currentChatId = "c1";
 let serverMode = false;
 let publicConfig = { demo: true, vapidPublicKey: "" };
 let pendingPhone = "";
+const pendingMutations = new Set();
+let chatSending = false;
 let deferredInstallPrompt = null;
 
 function loadState() {
@@ -150,6 +152,9 @@ async function refreshServerState(render = false) {
 }
 
 async function runServerMutation(path, options, successMessage) {
+  const mutationKey = `${options.method || "GET"}:${path}`;
+  if (pendingMutations.has(mutationKey)) return false;
+  pendingMutations.add(mutationKey);
   try {
     const result = await apiFetch(path, options);
     await refreshServerState(true);
@@ -158,6 +163,8 @@ async function runServerMutation(path, options, successMessage) {
   } catch (error) {
     showToast(error.message, "error");
     return false;
+  } finally {
+    pendingMutations.delete(mutationKey);
   }
 }
 
@@ -861,7 +868,28 @@ function checkAttendanceReminders() {
 async function sendChatMessage(text) {
   const value = text.trim();
   if (!value || !currentChatId) return;
-  if (serverMode) return runServerMutation(`/api/chats/${currentChatId}/messages`, { method: "POST", body: JSON.stringify({ text: value }) });
+  if (serverMode) {
+    const chatId = currentChatId;
+    const optimisticMessage = {
+      id: `pending-${Date.now()}`,
+      author: userName(),
+      role: session.role,
+      text: value,
+      time: new Date().toLocaleTimeString("uk-UA", { hour: "2-digit", minute: "2-digit" })
+    };
+    state.messages[chatId] ||= [];
+    state.messages[chatId].push(optimisticMessage);
+    renderCurrentView();
+    try {
+      await apiFetch(`/api/chats/${chatId}/messages`, { method: "POST", body: JSON.stringify({ text: value }) });
+      await refreshServerState(true);
+    } catch (error) {
+      state.messages[chatId] = (state.messages[chatId] || []).filter(message => message.id !== optimisticMessage.id);
+      renderCurrentView();
+      showToast(error.message, "error");
+    }
+    return;
+  }
   state.messages[currentChatId] ||= [];
   state.messages[currentChatId].push({ id: id("message"), author: userName(), role: session.role, text: value, time: new Date().toLocaleTimeString("uk-UA", { hour: "2-digit", minute: "2-digit" }) });
   saveState(); renderCurrentView();
@@ -968,7 +996,21 @@ document.addEventListener("change", async event => {
 document.addEventListener("submit", event => {
   if (event.target.id !== "chatForm") return;
   event.preventDefault();
-  sendChatMessage($("#chatInput").value);
+  if (chatSending) return;
+  chatSending = true;
+  const input = $("#chatInput");
+  const submit = event.target.querySelector('button[type="submit"]');
+  const value = input.value;
+  input.value = "";
+  input.disabled = true;
+  if (submit) submit.disabled = true;
+  sendChatMessage(value).finally(() => {
+    chatSending = false;
+    const nextInput = $("#chatInput");
+    const nextSubmit = document.querySelector('#chatForm button[type="submit"]');
+    if (nextInput) { nextInput.disabled = false; nextInput.focus(); }
+    if (nextSubmit) nextSubmit.disabled = false;
+  });
 });
 
 $("#accountBtn").addEventListener("click", () => {
