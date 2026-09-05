@@ -232,6 +232,7 @@ async function signIn(role) {
   $("#appShell").hidden = false;
   renderShell();
   navigate("dashboard");
+  promptNotificationSetup();
 }
 
 function signOut() {
@@ -581,7 +582,7 @@ function renderChats() {
         <form class="chat-compose" id="chatForm">
           <button class="icon-btn" type="button" title="Додати файл" aria-label="Додати файл"><i data-lucide="paperclip"></i></button>
           <input id="chatInput" aria-label="Повідомлення" placeholder="Напишіть повідомлення…" autocomplete="off">
-          <button class="icon-btn" type="submit" title="Надіслати" aria-label="Надіслати"><i data-lucide="send"></i></button>
+          <button class="btn btn-primary chat-send-btn" type="submit" title="Надіслати" aria-label="Надіслати"><i data-lucide="send"></i><span>Надіслати</span></button>
         </form>
       </div>
     </section>`;
@@ -886,6 +887,12 @@ async function enableNotifications() {
   showToast(permission === "granted" ? "Сповіщення увімкнено" : "Дозвіл на сповіщення не надано", permission === "granted" ? "success" : "error");
 }
 
+async function promptNotificationSetup() {
+  if (!serverMode || !session || !("Notification" in window) || Notification.permission !== "default" || sessionStorage.getItem("favorit-notification-prompted")) return;
+  sessionStorage.setItem("favorit-notification-prompted", "1");
+  setTimeout(() => enableNotifications(), 700);
+}
+
 async function installApp() {
   if (deferredInstallPrompt) {
     deferredInstallPrompt.prompt();
@@ -1073,8 +1080,12 @@ $("#notificationBtn").addEventListener("click", () => navigate("notifications"))
 $("#logoutBtn").addEventListener("click", signOut);
 
 $("#sendCodeBtn").addEventListener("click", async () => {
+  const button = $("#sendCodeBtn");
+  if (button.disabled) return;
+  button.disabled = true;
+  const originalText = button.textContent;
   const digits = $("#phoneInput").value.replace(/\D/g, "");
-  if (digits.length < 9) { $("#authError").textContent = "Введіть повний номер телефону."; return; }
+  if (digits.length < 9) { $("#authError").textContent = "Введіть повний номер телефону."; button.disabled = false; return; }
   $("#authError").textContent = "";
   pendingPhone = $("#phoneInput").value;
   if (serverMode) {
@@ -1083,6 +1094,7 @@ $("#sendCodeBtn").addEventListener("click", async () => {
       $("#codeHelp").innerHTML = result.devCode ? `Локальний код: <strong>${escapeHtml(result.devCode)}</strong>` : "Код надіслано в Telegram. Він діє 10 хвилин.";
     } catch (error) {
       $("#authError").textContent = error.message;
+      button.disabled = false;
       return;
     }
   } else {
@@ -1091,9 +1103,14 @@ $("#sendCodeBtn").addEventListener("click", async () => {
   $("#phoneStep").hidden = true;
   $("#codeStep").hidden = false;
   $("#codeInput").focus();
+  button.disabled = false;
+  button.textContent = originalText;
 });
 $("#backToPhoneBtn").addEventListener("click", () => { $("#phoneStep").hidden = false; $("#codeStep").hidden = true; });
 $("#verifyCodeBtn").addEventListener("click", async () => {
+  const button = $("#verifyCodeBtn");
+  if (button.disabled) return;
+  button.disabled = true;
   if (serverMode) {
     try {
       const result = await apiFetch("/api/auth/verify", { method: "POST", body: JSON.stringify({ phone: pendingPhone, code: $("#codeInput").value }) }, false);
@@ -1104,14 +1121,17 @@ $("#verifyCodeBtn").addEventListener("click", async () => {
       $("#appShell").hidden = false;
       currentTeamId = state.teams[0]?.id || "";
       renderShell(); navigate("dashboard");
+      promptNotificationSetup();
     } catch (error) {
       $("#authError").textContent = error.message;
     }
+    button.disabled = false;
     return;
   }
-  if ($("#codeInput").value !== "1111") { $("#authError").textContent = "Для демоверсії введіть код 1111."; return; }
+  if ($("#codeInput").value !== "1111") { $("#authError").textContent = "Для демоверсії введіть код 1111."; button.disabled = false; return; }
   const digits = $("#phoneInput").value.replace(/\D/g, "");
   signIn(digits.endsWith("671234567") ? "coach" : "parent");
+  button.disabled = false;
 });
 
 window.addEventListener("hashchange", () => { if (session) navigate(location.hash.slice(1)); });
@@ -1161,6 +1181,7 @@ async function initialize() {
     currentTeamId = session.role === "parent" ? parentPlayer().teamId : (state.teams[0]?.id || currentTeamId);
     renderShell();
     navigate(location.hash.slice(1) || "dashboard");
+    promptNotificationSetup();
   } else {
     refreshIcons();
   }

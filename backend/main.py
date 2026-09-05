@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from apscheduler.schedulers.background import BackgroundScheduler
-from fastapi import Depends, FastAPI, HTTPException, Response
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from sqlalchemy import func, inspect
@@ -28,7 +28,7 @@ from .models import (
     User,
 )
 from .reminders import run_attendance_reminders, send_event_reminders_now
-from .telegram import configure_webhook, router as telegram_router, telegram_call
+from .telegram import configure_webhook, router as telegram_router, send_telegram_message, telegram_call
 from .schemas import (
     AttendancePayload,
     EventPayload,
@@ -156,6 +156,11 @@ def notify_team(db: Session, team_id: int, title: str, text: str, kind: str = "s
         if kind == "schedule" and not guardian.schedule_changes:
             continue
         db.add(Notification(user_id=guardian.id, type=kind, title=title, text=text))
+
+
+def deliver_telegram(telegram_ids: list[str], title: str, text: str) -> None:
+    for telegram_id in telegram_ids:
+        send_telegram_message(telegram_id, f"{title}\n{text}")
 
 
 @app.get("/api/health")
@@ -408,7 +413,7 @@ def add_event_poll(db: Session, event: Event, team_id: int, coach_id: int) -> No
 
 
 @app.post("/api/events")
-def create_event(payload: EventPayload, coach: User = Depends(require_coach), db: Session = Depends(get_db)):
+def create_event(payload: EventPayload, background_tasks: BackgroundTasks, coach: User = Depends(require_coach), db: Session = Depends(get_db)):
     team_id = as_id(payload.team_id)
     ensure_coach_team(db, coach, team_id)
     item = _event_from_payload(payload, team_id)
@@ -417,6 +422,8 @@ def create_event(payload: EventPayload, coach: User = Depends(require_coach), db
     add_event_poll(db, item, team_id, coach.id)
     notify_team(db, team_id, "Нова подія", f"{item.title}: {item.starts_at.strftime('%d.%m о %H:%M')}")
     db.commit()
+    telegram_ids = [account.telegram_id for account in db.query(TelegramAccount).filter(TelegramAccount.user_id.in_([guardian.id for guardian in team_guardians(db, team_id)])).all()]
+    background_tasks.add_task(deliver_telegram, telegram_ids, "Нова подія у ФК Фаворит", f"{item.title}: {item.starts_at.strftime('%d.%m о %H:%M')}")
     return {"id": str(item.id)}
 
 
@@ -594,7 +601,7 @@ def delete_tournament(tournament_id: int, coach: User = Depends(require_coach), 
 
 
 @app.post("/api/chats/{chat_id}/messages")
-def create_message(chat_id: int, payload: MessagePayload, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def create_message(chat_id: int, payload: MessagePayload, background_tasks: BackgroundTasks, user: User = Depends(current_user), db: Session = Depends(get_db)):
     chat = db.get(Chat, chat_id)
     if not chat or not can_access_chat(db, user, chat):
         raise HTTPException(status_code=404, detail="Чат не знайдено")
@@ -605,6 +612,12 @@ def create_message(chat_id: int, payload: MessagePayload, user: User = Depends(c
             if guardian.chat_messages and (chat.kind == "team" or chat.parent_user_id == guardian.id):
                 db.add(Notification(user_id=guardian.id, type="chat", title=chat.title, text=payload.text.strip()[:180]))
     db.commit()
+    recipients = team_guardians(db, chat.team_id) if chat.kind == "team" and user.role == "coach" else []
+    if chat.kind == "direct":
+        team = db.get(Team, chat.team_id)
+        recipients = [db.get(User, chat.parent_user_id)] if chat.parent_user_id and user.role == "coach" else [db.get(User, team.coach_id)] if team else []
+    telegram_ids = [account.telegram_id for account in db.query(TelegramAccount).filter(TelegramAccount.user_id.in_([recipient.id for recipient in recipients if recipient])).all()]
+    background_tasks.add_task(deliver_telegram, telegram_ids, f"Нове повідомлення · {chat.title}", payload.text.strip()[:180])
     return {"id": str(item.id)}
 
 

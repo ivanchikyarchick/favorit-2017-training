@@ -27,6 +27,17 @@ def telegram_call(method: str, payload: dict):
         raise HTTPException(503, "Не вдалося зв’язатися з Telegram. Спробуйте пізніше") from None
 
 
+def send_telegram_message(telegram_id: str, text: str) -> bool:
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    if not token or not telegram_id:
+        return False
+    try:
+        response = httpx.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": telegram_id, "text": text}, timeout=5)
+        return response.is_success and bool(response.json().get("ok"))
+    except (httpx.HTTPError, ValueError):
+        return False
+
+
 def configure_webhook():
     if not os.getenv("TELEGRAM_BOT_TOKEN"):
         return

@@ -459,6 +459,7 @@ svg { width: 20px; height: 20px; stroke-width: 2; }
   .message { max-width: 88%; }
   .chat-compose { grid-template-columns: 1fr auto; }
   .chat-compose > .icon-btn { display: none; }
+  .chat-compose .chat-send-btn { display: inline-flex; }
   .notice-card { align-items: flex-start; }
   .notice-card time { display: none; }
 }

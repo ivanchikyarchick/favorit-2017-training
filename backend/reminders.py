@@ -7,7 +7,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .database import SessionLocal
-from .models import Attendance, Event, Notification, PushSubscription, User
+from .models import Attendance, Event, Notification, PushSubscription, TelegramAccount, User
+from .telegram import send_telegram_message
 
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,13 @@ def _send_push(db: Session, user_id: int, title: str, body: str) -> None:
     db.commit()
 
 
+def _send_channels(db: Session, user: User, title: str, body: str) -> None:
+    _send_push(db, user.id, title, body)
+    account = db.get(TelegramAccount, user.id)
+    if account:
+        send_telegram_message(account.telegram_id, f"{title}\n{body}")
+
+
 def run_attendance_reminders() -> None:
     now = datetime.utcnow()
     horizon = now + timedelta(hours=48)
@@ -78,7 +86,7 @@ def run_attendance_reminders() -> None:
                     except IntegrityError:
                         db.rollback()
                         continue
-                    _send_push(db, guardian.id, notice.title, notice.text)
+                    _send_channels(db, guardian, notice.title, notice.text)
     finally:
         db.close()
 
@@ -106,6 +114,6 @@ def send_event_reminders_now(db: Session, event: Event) -> int:
             )
             db.add(notice)
             db.commit()
-            _send_push(db, guardian.id, notice.title, notice.text)
+            _send_channels(db, guardian, notice.title, notice.text)
             sent += 1
     return sent
