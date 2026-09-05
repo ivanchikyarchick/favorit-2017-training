@@ -370,6 +370,12 @@ svg { width: 20px; height: 20px; stroke-width: 2; }
 .empty-state svg { width: 36px; height: 36px; color: var(--muted); }
 .empty-state h3 { margin: 12px 0 4px; }
 .empty-state p { margin: 0 0 17px; color: var(--muted); }
+.weekly-schedule { margin-bottom: 16px; }
+.weekly-rule-list { display: grid; gap: 8px; }
+.weekly-rule-row { display: grid; grid-template-columns: 105px 105px 20px 105px minmax(150px, 1fr) minmax(150px, 1fr); align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid var(--line); }
+.weekly-rule-row strong { font-size: 13px; }
+.weekly-rule-row .form-input { min-width: 0; }
+@media (max-width: 760px) { .weekly-rule-row { grid-template-columns: 1fr 1fr 20px 1fr; } .weekly-rule-row strong { grid-column: 1 / -1; } .weekly-rule-row .weekly-place, .weekly-rule-row .weekly-address { grid-column: span 2; } }
 
 .modal { width: min(560px, calc(100% - 28px)); max-height: calc(100vh - 30px); padding: 0; border: 0; border-radius: 8px; color: var(--ink); box-shadow: 0 20px 70px rgba(12,25,48,0.27); }
 .modal::backdrop { background: rgba(7, 17, 34, 0.58); backdrop-filter: blur(3px); }

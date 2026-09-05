@@ -60,6 +60,7 @@ function seedData() {
       { id: "e5", teamId: "team-2016", type: "training", title: "Тренування", start: nextWeekday(5, 18, 30), end: nextWeekday(5, 19, 45), place: "Стадіон «Колос»", address: "вул. Київський шлях, 1", poll: true },
       { id: "e6", teamId: "team-2017", type: "match", title: "Контрольна гра з ФК «Лівий Берег»", start: futureDate(10, 11, 0), end: futureDate(10, 12, 30), place: "Стадіон «Колос»", address: "Київський шлях, 1", poll: true }
     ],
+    scheduleRules: [],
     tournaments: [
       { id: "t1", teamId: "team-2017", title: "Кубок Борисполя U-9", date: futureDate(17, 9, 0), place: "Стадіон «Колос»", status: "Реєстрацію підтверджено", note: "Збір команди о 08:15. Форма синя." },
       { id: "t2", teamId: "team-2017", title: "Осінній Favorit Cup", date: futureDate(38, 9, 30), place: "НВК «Мрія»", status: "Планується", note: "Формат 5+1, склад буде оголошено пізніше." },
@@ -471,12 +472,15 @@ function coachAttendanceTable(event) {
 
 function renderSchedule() {
   const events = teamEvents();
+  const rules = state.scheduleRules?.filter(rule => rule.teamId === currentTeamId) || [];
+  const dayNames = ["Понеділок", "Вівторок", "Середа", "Четвер", "П’ятниця", "Субота", "Неділя"];
   return `
     <section>
       <div class="section-head">
-        <div><h2>Календар команди</h2><p>${events.length} запланованих подій</p></div>
-        ${session.role === "coach" ? `<button class="btn btn-primary" type="button" data-action="new-event"><i data-lucide="plus"></i><span>Нова подія</span></button>` : ""}
+        <div><h2>Розклад команди</h2><p>${events.length} запланованих подій</p></div>
+        ${session.role === "coach" ? `<div class="section-actions"><button class="btn btn-secondary" type="button" data-action="edit-weekly-schedule"><i data-lucide="calendar-cog"></i><span>Тижневий розклад</span></button><button class="btn btn-primary" type="button" data-action="new-event"><i data-lucide="plus"></i><span>Нова подія</span></button></div>` : ""}
       </div>
+      ${rules.length ? `<section class="panel weekly-schedule"><div class="panel-title"><h3>Регулярні тренування</h3><span class="small muted">Автоматично на найближчі тижні</span></div>${rules.map(rule => `<div class="detail-row"><span>${dayNames[rule.weekday]}</span><strong>${rule.start}–${rule.end} · ${escapeHtml(rule.place)}</strong></div>`).join("")}</section>` : ""}
       <div class="event-list">${events.length ? events.map(item => eventCard(item, session.role === "coach")).join("") : emptyState("calendar-x", "Подій ще немає", "Тренер додасть тренування або матч.")}</div>
     </section>`;
 }
@@ -493,7 +497,7 @@ function renderRoster() {
             <div class="detail-row"><span>Дата народження</span><strong>${child.birth}</strong></div>
             <div class="detail-row"><span>Команда</span><strong>${escapeHtml(team().name)}</strong></div>
             <div class="detail-row"><span>Тренер</span><strong>${escapeHtml(team().coach)}</strong></div>
-            <div class="detail-row"><span>Контакт батьків</span><strong>${escapeHtml(child.phone)}</strong></div>
+            <div class="detail-row"><span>Контакти батьків</span><strong>${escapeHtml([child.phone, child.phone2].filter(Boolean).join("; "))}</strong></div>
           </div>
         </section>
         <section class="panel">
@@ -521,7 +525,7 @@ function renderRoster() {
           <tbody>${players.map(player => `
             <tr>
               <td><div class="person"><span class="person-avatar">${initials(player.name)}</span><div><strong>${escapeHtml(player.name)}</strong><small>№ ${player.number}</small></div></div></td>
-              <td>${escapeHtml(player.position)}</td><td>${player.birth}</td><td>${escapeHtml(player.parent)}</td><td>${escapeHtml(player.phone)}</td>
+              <td>${escapeHtml(player.position)}</td><td>${player.birth}</td><td>${escapeHtml([player.parent, player.parent2].filter(Boolean).join("; "))}</td><td>${escapeHtml([player.phone, player.phone2].filter(Boolean).join("; "))}</td>
               <td><button class="icon-btn" type="button" data-action="edit-player" data-id="${player.id}" title="Редагувати гравця" aria-label="Редагувати гравця"><i data-lucide="pencil"></i></button></td>
             </tr>`).join("")}</tbody>
         </table>
@@ -638,8 +642,17 @@ function openModal({ eyebrow = "", title, body, saveText = "Зберегти", o
   $("#modalForm").onsubmit = async event => {
     event.preventDefault();
     const formData = new FormData(event.currentTarget);
-    const result = await onSave(formData);
-    if (result !== false) $("#appModal").close();
+    const submitButton = event.currentTarget.querySelector('button[type="submit"]');
+    const originalText = submitButton?.textContent || "Зберегти";
+    if (submitButton) { submitButton.disabled = true; submitButton.textContent = "Зберігаємо…"; }
+    try {
+      const result = await onSave(formData);
+      if (result !== false) $("#appModal").close();
+      else if (submitButton) { submitButton.disabled = false; submitButton.textContent = originalText; }
+    } catch (error) {
+      showToast(error.message, "error");
+      if (submitButton) { submitButton.disabled = false; submitButton.textContent = originalText; }
+    }
   };
   if (onDelete) $("#modalDeleteBtn").onclick = async () => { if (await onDelete() !== false) $("#appModal").close(); };
   $("#appModal").showModal();
@@ -650,6 +663,41 @@ function toLocalInput(iso) {
   const date = new Date(iso);
   date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
   return date.toISOString().slice(0, 16);
+}
+
+function openWeeklyScheduleModal() {
+  const dayNames = ["Понеділок", "Вівторок", "Середа", "Четвер", "П’ятниця", "Субота", "Неділя"];
+  const rules = state.scheduleRules?.filter(rule => rule.teamId === currentTeamId) || [];
+  const rows = dayNames.map((day, weekday) => {
+    const rule = rules.find(item => item.weekday === weekday);
+    return `<div class="weekly-rule-row"><strong>${day}</strong><input class="form-input" type="time" name="start-${weekday}" value="${rule?.start || ""}"><span>до</span><input class="form-input" type="time" name="end-${weekday}" value="${rule?.end || ""}"><input class="form-input weekly-place" name="place-${weekday}" placeholder="Місце" value="${escapeHtml(rule?.place || "")}"><input class="form-input weekly-address" name="address-${weekday}" placeholder="Адреса" value="${escapeHtml(rule?.address || "")}"><input type="hidden" name="rule-${weekday}" value="${rule?.id || ""}"></div>`;
+  }).join("");
+  openModal({
+    eyebrow: team().name,
+    title: "Тижневий розклад",
+    saveText: "Зберегти розклад",
+    body: `<p class="small muted">Вкажіть час і місце. Порожній рядок вимкне тренування цього дня. Нові події та опитування створяться автоматично.</p><div class="weekly-rule-list">${rows}</div>`,
+    onSave: async data => {
+      const values = Object.fromEntries(data);
+      const changes = dayNames.map((_, weekday) => ({ weekday, start: values[`start-${weekday}`], end: values[`end-${weekday}`], place: values[`place-${weekday}`]?.trim(), address: values[`address-${weekday}`]?.trim(), id: values[`rule-${weekday}`] })).filter(item => item.start || item.end || item.place || item.address);
+      for (const item of changes) {
+        if (!item.start || !item.end || !item.place || !item.address) { showToast("Заповніть усі поля активного дня", "error"); return false; }
+        if (item.end <= item.start) { showToast("Час завершення має бути пізніше початку", "error"); return false; }
+      }
+      if (serverMode) {
+        try {
+          await Promise.all(changes.map(item => apiFetch(item.id ? `/api/schedule-rules/${item.id}` : "/api/schedule-rules", { method: item.id ? "PUT" : "POST", body: JSON.stringify({ team_id: currentTeamId, weekday: item.weekday, start: item.start, end: item.end, title: "Тренування", place: item.place, address: item.address, poll: true }) })));
+          await Promise.all(rules.filter(rule => !changes.some(item => item.id === rule.id)).map(rule => apiFetch(`/api/schedule-rules/${rule.id}`, { method: "DELETE" })));
+          await refreshServerState(true);
+          showToast("Тижневий розклад збережено", "success");
+          return true;
+        } catch (error) { showToast(error.message, "error"); return false; }
+      }
+      state.scheduleRules = (state.scheduleRules || []).filter(rule => rule.teamId !== currentTeamId);
+      changes.forEach(item => state.scheduleRules.push({ id: item.id || id("rule"), teamId: currentTeamId, weekday: item.weekday, start: item.start, end: item.end, title: "Тренування", place: item.place, address: item.address, poll: true }));
+      saveState(); renderCurrentView(); showToast("Тижневий розклад збережено", "success");
+    }
+  });
 }
 
 function openEventModal(existing = null) {
@@ -703,15 +751,17 @@ function openPlayerModal(existing = null) {
       <label class="field"><span>Номер</span><input class="form-input" type="number" min="1" max="99" name="number" required value="${existing?.number || ""}"></label>
       <label class="field"><span>Позиція</span><select class="form-select" name="position">${["Воротар", "Захисник", "Півзахисник", "Нападник"].map(position => `<option ${existing?.position === position || (!existing && position === "Півзахисник") ? "selected" : ""}>${position}</option>`).join("")}</select></label>
       <label class="field"><span>Дата народження</span><input class="form-input" name="birth" placeholder="дд.мм.рррр" required value="${escapeHtml(existing?.birth || "")}"></label>
-      <label class="field"><span>Телефон батьків</span><input class="form-input" type="tel" name="phone" required placeholder="+380…" value="${escapeHtml(existing?.phone || "")}"></label>
-      <label class="field full"><span>Ім’я та прізвище когось із батьків</span><input class="form-input" name="parent" required value="${escapeHtml(existing?.parent || "")}"></label>
+      <label class="field"><span>Телефон першого з батьків</span><input class="form-input" type="tel" name="phone" required placeholder="+380…" value="${escapeHtml(existing?.phone || "")}"></label>
+      <label class="field"><span>Ім’я першого з батьків</span><input class="form-input" name="parent" required value="${escapeHtml(existing?.parent || "")}"></label>
+      <label class="field"><span>Телефон другого з батьків</span><input class="form-input" type="tel" name="phone2" placeholder="Необов’язково" value="${escapeHtml(existing?.phone2 || "")}"></label>
+      <label class="field"><span>Ім’я другого з батьків</span><input class="form-input" name="parent2" placeholder="Необов’язково" value="${escapeHtml(existing?.parent2 || "")}"></label>
     </div>`,
     onSave: async data => {
       const values = Object.fromEntries(data);
       if (serverMode) {
-        return runServerMutation(existing ? `/api/players/${existing.id}` : "/api/players", { method: existing ? "PUT" : "POST", body: JSON.stringify({ team_id: currentTeamId, name: values.name.trim(), number: Number(values.number), position: values.position, birth: values.birth.trim(), parent: values.parent.trim(), phone: values.phone.trim() }) }, existing ? "Дані гравця оновлено" : "Гравця додано до складу");
+        return runServerMutation(existing ? `/api/players/${existing.id}` : "/api/players", { method: existing ? "PUT" : "POST", body: JSON.stringify({ team_id: currentTeamId, name: values.name.trim(), number: Number(values.number), position: values.position, birth: values.birth.trim(), parent: values.parent.trim(), phone: values.phone.trim(), parent2: values.parent2.trim(), phone2: values.phone2.trim() }) }, existing ? "Дані гравця оновлено" : "Гравця додано до складу");
       }
-      const record = { id: existing?.id || id("player"), teamId: currentTeamId, name: values.name.trim(), number: Number(values.number), position: values.position, birth: values.birth.trim(), parent: values.parent.trim(), phone: values.phone.trim() };
+      const record = { id: existing?.id || id("player"), teamId: currentTeamId, name: values.name.trim(), number: Number(values.number), position: values.position, birth: values.birth.trim(), parent: values.parent.trim(), phone: values.phone.trim(), parent2: values.parent2.trim(), phone2: values.phone2.trim() };
       if (existing) state.players = state.players.map(item => item.id === existing.id ? record : item); else state.players.push(record);
       saveState(); renderCurrentView(); showToast(existing ? "Дані гравця оновлено" : "Гравця додано до складу", "success");
     },
@@ -960,6 +1010,7 @@ document.addEventListener("click", async event => {
     else { delete state.attendance[action.dataset.event][parentPlayer().id]; saveState(); renderCurrentView(); }
   }
   if (name === "new-event") openEventModal();
+  if (name === "edit-weekly-schedule") openWeeklyScheduleModal();
   if (name === "edit-event") openEventModal(state.events.find(item => item.id === action.dataset.id));
   if (name === "new-player") openPlayerModal();
   if (name === "edit-player") openPlayerModal(state.players.find(item => item.id === action.dataset.id));

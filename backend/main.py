@@ -7,7 +7,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import Depends, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from sqlalchemy import func
+from sqlalchemy import func, inspect
 from sqlalchemy.orm import Session
 
 from .auth import code_hash, create_access_token, current_user, generate_code, normalize_phone, require_coach
@@ -21,6 +21,7 @@ from .models import (
     OtpCode,
     Player,
     PushSubscription,
+    ScheduleRule,
     Team,
     TelegramAccount,
     Tournament,
@@ -37,6 +38,7 @@ from .schemas import (
     PollPayload,
     PushSubscriptionPayload,
     SettingsPayload,
+    ScheduleRulePayload,
     TeamPayload,
     TournamentPayload,
     VerifyRequest,
@@ -59,11 +61,18 @@ def _start_scheduler() -> BackgroundScheduler | None:
     return scheduler
 
 
+def ensure_schema() -> None:
+    Base.metadata.create_all(bind=engine)
+    if "schedule_rule_id" not in {column["name"] for column in inspect(engine).get_columns("events")}:
+        with engine.begin() as connection:
+            connection.exec_driver_sql("ALTER TABLE events ADD COLUMN schedule_rule_id INTEGER")
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     if APP_ENV == "production" and os.getenv("JWT_SECRET", "development-only-change-me-not-for-production") == "development-only-change-me-not-for-production":
         raise RuntimeError("JWT_SECRET must be configured in production")
-    Base.metadata.create_all(bind=engine)
+    ensure_schema()
     db = SessionLocal()
     try:
         seed_database(db)
@@ -231,6 +240,7 @@ def demo_login(role: str, db: Session = Depends(get_db)):
 def bootstrap(user: User = Depends(current_user), db: Session = Depends(get_db)):
     allowed_ids = team_ids_for(db, user)
     teams = db.query(Team).filter(Team.id.in_(allowed_ids)).order_by(Team.birth_year.desc()).all() if allowed_ids else []
+    schedule_rules = db.query(ScheduleRule).filter(ScheduleRule.team_id.in_(allowed_ids), ScheduleRule.active.is_(True)).order_by(ScheduleRule.weekday, ScheduleRule.starts_at).all() if allowed_ids else []
     if user.role == "coach":
         players = db.query(Player).filter(Player.team_id.in_(allowed_ids)).order_by(Player.name).all() if allowed_ids else []
     else:
@@ -268,11 +278,14 @@ def bootstrap(user: User = Depends(current_user), db: Session = Depends(get_db))
     return {
         "user": {"id": str(user.id), "name": user.name, "phone": user.phone, "role": user.role},
         "teams": [{"id": str(item.id), "name": item.name, "birthYear": item.birth_year, "coach": item.coach.name, "color": item.color} for item in teams],
+        "scheduleRules": [{"id": str(item.id), "teamId": str(item.team_id), "weekday": item.weekday, "start": item.starts_at, "end": item.ends_at, "title": item.title, "place": item.place, "address": item.address, "poll": item.poll_enabled} for item in schedule_rules],
         "players": [{
             "id": str(item.id), "teamId": str(item.team_id), "name": item.name, "number": item.shirt_number,
             "position": item.position, "birth": item.birth_date,
             "parent": item.guardians[0].name if item.guardians else "Не вказано",
             "phone": item.guardians[0].phone if item.guardians else "Не вказано",
+            "parent2": item.guardians[1].name if len(item.guardians) > 1 else "",
+            "phone2": item.guardians[1].phone if len(item.guardians) > 1 else "",
         } for item in players],
         "events": [{
             "id": str(item.id), "teamId": str(item.team_id), "type": item.type, "title": item.title,
@@ -308,25 +321,41 @@ def create_team(payload: TeamPayload, coach: User = Depends(require_coach), db: 
     return {"id": str(item.id)}
 
 
+def get_or_create_guardians(db: Session, contacts: tuple[tuple[str | None, str | None], ...]) -> list[User]:
+    guardians = []
+    for name, phone in contacts:
+        if not name and not phone:
+            continue
+        if not name or not phone:
+            raise HTTPException(status_code=422, detail="Заповніть ім’я та номер обох батьків")
+        normalized = normalize_phone(phone)
+        guardian = db.query(User).filter(User.phone == normalized).first()
+        if guardian and guardian.role != "parent":
+            raise HTTPException(status_code=409, detail="Цей номер належить іншому типу облікового запису")
+        if not guardian:
+            guardian = User(phone=normalized, name=name.strip(), role="parent")
+            db.add(guardian)
+            db.flush()
+        else:
+            guardian.name = name.strip()
+        if guardian not in guardians:
+            guardians.append(guardian)
+    if not guardians:
+        raise HTTPException(status_code=422, detail="Додайте хоча б одного з батьків")
+    return guardians
+
+
 @app.post("/api/players")
 def create_player(payload: PlayerPayload, coach: User = Depends(require_coach), db: Session = Depends(get_db)):
     team_id = as_id(payload.team_id)
     ensure_coach_team(db, coach, team_id)
-    phone = normalize_phone(payload.phone)
-    parent = db.query(User).filter(User.phone == phone).first()
-    if parent and parent.role != "parent":
-        raise HTTPException(status_code=409, detail="Цей номер належить іншому типу облікового запису")
-    if not parent:
-        parent = User(phone=phone, name=payload.parent.strip(), role="parent")
-        db.add(parent)
-        db.flush()
-    else:
-        parent.name = payload.parent.strip()
+    guardians = get_or_create_guardians(db, ((payload.parent, payload.phone), (payload.parent2, payload.phone2)))
     player = Player(team_id=team_id, name=payload.name.strip(), shirt_number=payload.number, position=payload.position, birth_date=payload.birth)
-    player.guardians.append(parent)
+    player.guardians = guardians
     db.add(player)
-    if not db.query(Chat.id).filter(Chat.team_id == team_id, Chat.kind == "direct", Chat.parent_user_id == parent.id).first():
-        db.add(Chat(team_id=team_id, title=f"Тренер {coach.name.split()[0]}", kind="direct", parent_user_id=parent.id))
+    for parent in guardians:
+        if not db.query(Chat.id).filter(Chat.team_id == team_id, Chat.kind == "direct", Chat.parent_user_id == parent.id).first():
+            db.add(Chat(team_id=team_id, title=f"Тренер {coach.name.split()[0]}", kind="direct", parent_user_id=parent.id))
     db.commit()
     return {"id": str(player.id)}
 
@@ -337,22 +366,15 @@ def update_player(player_id: int, payload: PlayerPayload, coach: User = Depends(
     if not player:
         raise HTTPException(status_code=404, detail="Гравця не знайдено")
     ensure_coach_team(db, coach, player.team_id)
-    phone = normalize_phone(payload.phone)
-    parent = db.query(User).filter(User.phone == phone).first()
-    if parent and parent.role != "parent":
-        raise HTTPException(status_code=409, detail="Цей номер належить іншому типу облікового запису")
-    if not parent:
-        parent = User(phone=phone, name=payload.parent.strip(), role="parent")
-        db.add(parent)
-        db.flush()
-    parent.name = payload.parent.strip()
+    guardians = get_or_create_guardians(db, ((payload.parent, payload.phone), (payload.parent2, payload.phone2)))
     player.name = payload.name.strip()
     player.shirt_number = payload.number
     player.position = payload.position
     player.birth_date = payload.birth
-    player.guardians = [parent]
-    if not db.query(Chat.id).filter(Chat.team_id == player.team_id, Chat.kind == "direct", Chat.parent_user_id == parent.id).first():
-        db.add(Chat(team_id=player.team_id, title=f"Тренер {coach.name.split()[0]}", kind="direct", parent_user_id=parent.id))
+    player.guardians = guardians
+    for parent in guardians:
+        if not db.query(Chat.id).filter(Chat.team_id == player.team_id, Chat.kind == "direct", Chat.parent_user_id == parent.id).first():
+            db.add(Chat(team_id=player.team_id, title=f"Тренер {coach.name.split()[0]}", kind="direct", parent_user_id=parent.id))
     db.commit()
     return {"ok": True}
 
@@ -377,15 +399,89 @@ def _event_from_payload(payload: EventPayload, team_id: int) -> Event:
     return Event(team_id=team_id, type=payload.type, title=payload.title.strip(), starts_at=start, ends_at=end, place=payload.place.strip(), address=payload.address.strip(), notes=payload.notes.strip(), poll_enabled=payload.poll)
 
 
+def add_event_poll(db: Session, event: Event, team_id: int, coach_id: int) -> None:
+    if not event.poll_enabled:
+        return
+    chat = db.query(Chat).filter(Chat.team_id == team_id, Chat.kind == "team").first()
+    if chat:
+        db.add(Message(chat_id=chat.id, author_id=coach_id, text=f"Чи буде ваша дитина на події «{event.title}» {event.starts_at.strftime('%d.%m о %H:%M')}?", event_id=event.id, is_poll=True))
+
+
 @app.post("/api/events")
 def create_event(payload: EventPayload, coach: User = Depends(require_coach), db: Session = Depends(get_db)):
     team_id = as_id(payload.team_id)
     ensure_coach_team(db, coach, team_id)
     item = _event_from_payload(payload, team_id)
     db.add(item)
+    db.flush()
+    add_event_poll(db, item, team_id, coach.id)
     notify_team(db, team_id, "Нова подія", f"{item.title}: {item.starts_at.strftime('%d.%m о %H:%M')}")
     db.commit()
     return {"id": str(item.id)}
+
+
+def materialize_schedule(db: Session, rule: ScheduleRule, coach_id: int, replace_future: bool = False) -> None:
+    now = datetime.utcnow()
+    if replace_future:
+        db.query(Event).filter(Event.schedule_rule_id == rule.id, Event.starts_at > now).delete(synchronize_session=False)
+    start_clock = datetime.strptime(rule.starts_at, "%H:%M").time()
+    end_clock = datetime.strptime(rule.ends_at, "%H:%M").time()
+    for offset in range(0, 57):
+        day = now.date() + timedelta(days=offset)
+        if day.weekday() != rule.weekday:
+            continue
+        start = datetime.combine(day, start_clock)
+        end = datetime.combine(day, end_clock)
+        if start <= now or end <= start:
+            continue
+        exists = db.query(Event.id).filter(Event.team_id == rule.team_id, Event.starts_at == start, Event.type == "training").first()
+        if exists:
+            continue
+        event = Event(team_id=rule.team_id, schedule_rule_id=rule.id, type="training", title=rule.title, starts_at=start, ends_at=end, place=rule.place, address=rule.address, poll_enabled=rule.poll_enabled)
+        db.add(event)
+        db.flush()
+        add_event_poll(db, event, rule.team_id, coach_id)
+
+
+@app.post("/api/schedule-rules")
+def create_schedule_rule(payload: ScheduleRulePayload, coach: User = Depends(require_coach), db: Session = Depends(get_db)):
+    team_id = as_id(payload.team_id)
+    ensure_coach_team(db, coach, team_id)
+    if datetime.strptime(payload.end, "%H:%M") <= datetime.strptime(payload.start, "%H:%M"):
+        raise HTTPException(status_code=422, detail="Час завершення має бути пізніше початку")
+    rule = ScheduleRule(team_id=team_id, weekday=payload.weekday, starts_at=payload.start, ends_at=payload.end, title=payload.title.strip(), place=payload.place.strip(), address=payload.address.strip(), poll_enabled=payload.poll)
+    db.add(rule)
+    db.flush()
+    materialize_schedule(db, rule, coach.id)
+    db.commit()
+    return {"id": str(rule.id)}
+
+
+@app.put("/api/schedule-rules/{rule_id}")
+def update_schedule_rule(rule_id: int, payload: ScheduleRulePayload, coach: User = Depends(require_coach), db: Session = Depends(get_db)):
+    rule = db.get(ScheduleRule, rule_id)
+    if not rule:
+        raise HTTPException(status_code=404, detail="Розклад не знайдено")
+    ensure_coach_team(db, coach, rule.team_id)
+    if datetime.strptime(payload.end, "%H:%M") <= datetime.strptime(payload.start, "%H:%M"):
+        raise HTTPException(status_code=422, detail="Час завершення має бути пізніше початку")
+    for field, value in (("weekday", payload.weekday), ("starts_at", payload.start), ("ends_at", payload.end), ("title", payload.title.strip()), ("place", payload.place.strip()), ("address", payload.address.strip()), ("poll_enabled", payload.poll)):
+        setattr(rule, field, value)
+    materialize_schedule(db, rule, coach.id, replace_future=True)
+    db.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/schedule-rules/{rule_id}", status_code=204)
+def delete_schedule_rule(rule_id: int, coach: User = Depends(require_coach), db: Session = Depends(get_db)):
+    rule = db.get(ScheduleRule, rule_id)
+    if not rule:
+        raise HTTPException(status_code=404, detail="Розклад не знайдено")
+    ensure_coach_team(db, coach, rule.team_id)
+    db.query(Event).filter(Event.schedule_rule_id == rule.id, Event.starts_at > datetime.utcnow()).delete(synchronize_session=False)
+    rule.active = False
+    db.commit()
+    return Response(status_code=204)
 
 
 @app.put("/api/events/{event_id}")

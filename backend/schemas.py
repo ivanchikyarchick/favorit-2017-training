@@ -37,6 +37,19 @@ class PlayerPayload(BaseModel):
     birth: str = Field(min_length=6, max_length=20)
     parent: str = Field(min_length=3, max_length=120)
     phone: str = Field(min_length=9, max_length=32)
+    parent2: str | None = Field(default=None, max_length=120)
+    phone2: str | None = Field(default=None, max_length=32)
+
+
+class ScheduleRulePayload(BaseModel):
+    team_id: int | str
+    weekday: int = Field(ge=0, le=6)
+    start: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    end: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    title: str = Field(default="Тренування", min_length=2, max_length=160)
+    place: str = Field(min_length=2, max_length=180)
+    address: str = Field(min_length=2, max_length=220)
+    poll: bool = True
 
 
 class TeamPayload(BaseModel):

@@ -90,6 +90,7 @@ class Event(Base):
 
     id = Column(Integer, primary_key=True)
     team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True)
+    schedule_rule_id = Column(Integer, ForeignKey("schedule_rules.id", ondelete="SET NULL"), nullable=True, index=True)
     type = Column(String(30), nullable=False, default="training")
     title = Column(String(160), nullable=False)
     starts_at = Column(DateTime, nullable=False, index=True)
@@ -100,6 +101,21 @@ class Event(Base):
     poll_enabled = Column(Boolean, nullable=False, default=True)
     cancelled = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class ScheduleRule(Base):
+    __tablename__ = "schedule_rules"
+
+    id = Column(Integer, primary_key=True)
+    team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True)
+    weekday = Column(Integer, nullable=False)
+    starts_at = Column(String(5), nullable=False)
+    ends_at = Column(String(5), nullable=False)
+    title = Column(String(160), nullable=False, default="Тренування")
+    place = Column(String(180), nullable=False)
+    address = Column(String(220), nullable=False)
+    poll_enabled = Column(Boolean, nullable=False, default=True)
+    active = Column(Boolean, nullable=False, default=True)
 
 
 class Attendance(Base):
