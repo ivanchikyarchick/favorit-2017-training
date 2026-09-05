@@ -425,6 +425,7 @@ function renderDashboard() {
           <section class="panel">
             <div class="panel-title"><h3>Швидкі дії</h3></div>
             <div class="stack" style="gap:8px">
+              <button class="btn btn-secondary btn-block" type="button" data-action="new-team"><i data-lucide="shield-plus"></i> Створити команду</button>
               <button class="btn btn-secondary btn-block" type="button" data-action="chat-poll"><i data-lucide="list-checks"></i> Опитування в чат</button>
               <button class="btn btn-secondary btn-block" type="button" data-action="new-tournament"><i data-lucide="trophy"></i> Додати турнір</button>
             </div>
@@ -492,8 +493,8 @@ function renderRoster() {
       <div class="section-head">
         <div><h2>${escapeHtml(team().name)}</h2><p>${players.length} гравців у складі</p></div>
         <div class="section-actions">
-          <button class="btn btn-secondary" type="button" data-action="new-team"><i data-lucide="shield-plus"></i><span>Команда</span></button>
-          <button class="btn btn-primary" type="button" data-action="new-player"><i data-lucide="user-plus"></i><span>Гравець</span></button>
+          <button class="btn btn-secondary" type="button" data-action="new-team"><i data-lucide="shield-plus"></i><span>Створити команду</span></button>
+          <button class="btn btn-primary" type="button" data-action="new-player"><i data-lucide="user-plus"></i><span>Додати гравця</span></button>
         </div>
       </div>
       <section class="panel" style="padding:0;overflow-x:auto">
