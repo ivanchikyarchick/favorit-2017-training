@@ -975,7 +975,7 @@ $("#sendCodeBtn").addEventListener("click", async () => {
   if (serverMode) {
     try {
       const result = await apiFetch("/api/auth/request-code", { method: "POST", body: JSON.stringify({ phone: pendingPhone }) }, false);
-      $("#codeHelp").innerHTML = result.devCode ? `Локальний код: <strong>${escapeHtml(result.devCode)}</strong>` : "Код надіслано в SMS. Він діє 10 хвилин.";
+      $("#codeHelp").innerHTML = result.devCode ? `Локальний код: <strong>${escapeHtml(result.devCode)}</strong>` : "Код надіслано в Telegram. Він діє 10 хвилин.";
     } catch (error) {
       $("#authError").textContent = error.message;
       return;
@@ -1034,6 +1034,10 @@ async function initialize() {
     serverMode = false;
   }
   $("#demoAccess").hidden = serverMode && !publicConfig.demo;
+  if (serverMode && /^[A-Za-z0-9_]+$/.test(publicConfig.telegramBot || "")) {
+    $("#telegramEntry").hidden = false;
+    $("#telegramLink").href = `https://t.me/${publicConfig.telegramBot}?start=login`;
+  }
   $("#demoNote").textContent = serverMode
     ? (publicConfig.demo ? "Тестовий вхід увімкнено адміністратором." : "Вхід доступний лише для номерів, доданих тренером.")
     : "Статична демоверсія: дані зберігаються лише на цьому пристрої.";

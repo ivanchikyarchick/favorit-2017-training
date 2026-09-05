@@ -32,13 +32,14 @@
           <input id="phoneInput" type="tel" inputmode="numeric" autocomplete="tel" maxlength="12" placeholder="67 123 45 67">
         </div>
         <button class="btn btn-primary btn-block" id="sendCodeBtn" type="button">Отримати код</button>
+        <p id="telegramEntry" hidden><a id="telegramLink" target="_blank" rel="noopener">Підключити Telegram</a></p>
       </div>
 
       <div id="codeStep" hidden>
         <button class="text-btn back-btn" id="backToPhoneBtn" type="button">← Змінити номер</button>
         <h2>Підтвердження</h2>
-        <p class="auth-copy" id="codeHelp">Введіть код із SMS.</p>
-        <label class="field-label" for="codeInput">Код із SMS</label>
+        <p class="auth-copy" id="codeHelp">Введіть код із Telegram.</p>
+        <label class="field-label" for="codeInput">Код входу</label>
         <input class="code-input" id="codeInput" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="4" placeholder="••••">
         <button class="btn btn-primary btn-block" id="verifyCodeBtn" type="button">Увійти</button>
       </div>

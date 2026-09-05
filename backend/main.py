@@ -22,11 +22,12 @@ from .models import (
     Player,
     PushSubscription,
     Team,
+    TelegramAccount,
     Tournament,
     User,
 )
 from .reminders import run_attendance_reminders, send_event_reminders_now
-from .sms import SmsDeliveryError, send_login_code
+from .telegram import configure_webhook, router as telegram_router, telegram_call
 from .schemas import (
     AttendancePayload,
     EventPayload,
@@ -68,6 +69,7 @@ async def lifespan(_: FastAPI):
         seed_database(db)
     finally:
         db.close()
+    configure_webhook()
     scheduler = _start_scheduler()
     yield
     if scheduler:
@@ -81,6 +83,8 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
     lifespan=lifespan,
 )
+
+app.include_router(telegram_router)
 
 origins = [origin.strip() for origin in os.getenv("ALLOWED_ORIGINS", "https://ivanchikyarchick.github.io").split(",") if origin.strip()]
 app.add_middleware(
@@ -152,7 +156,8 @@ def health():
 
 @app.get("/api/config")
 def public_config():
-    return {"server": True, "demo": ENABLE_DEMO, "vapidPublicKey": VAPID_PUBLIC_KEY}
+    return {"server": True, "demo": ENABLE_DEMO, "vapidPublicKey": VAPID_PUBLIC_KEY,
+            "telegramBot": os.getenv("TELEGRAM_BOT_USERNAME", "").lstrip("@")}
 
 
 @app.post("/api/auth/request-code")
@@ -174,13 +179,16 @@ def request_code(payload: PhoneRequest, db: Session = Depends(get_db)):
     db.add(otp)
     db.flush()
     otp.code_hash = code_hash(phone, code, otp.id)
-    try:
-        send_login_code(phone, code, otp.id)
-    except SmsDeliveryError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if os.getenv("TELEGRAM_BOT_TOKEN") or APP_ENV == "production":
+        account = db.get(TelegramAccount, user.id)
+        if not account or account.phone != phone:
+            raise HTTPException(409, "Відкрийте Telegram-бота та підтвердьте свій номер, потім натисніть «Отримати код» знову")
+        telegram_call("sendMessage", {"chat_id": account.telegram_id,
+            "text": f"Код входу до ФК Фаворит: {code}. Діє 10 хвилин. Нікому не повідомляйте код."})
+    db.query(OtpCode).filter(OtpCode.phone == phone, OtpCode.id != otp.id).update({"used": True})
     db.commit()
     result = {"ok": True, "expiresIn": 600}
-    if APP_ENV != "production":
+    if APP_ENV != "production" and not os.getenv("TELEGRAM_BOT_TOKEN"):
         result["devCode"] = code
     return result
 

@@ -41,6 +41,13 @@ class User(Base):
     coached_teams = relationship("Team", back_populates="coach")
 
 
+class TelegramAccount(Base):
+    __tablename__ = "telegram_accounts"
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    telegram_id = Column(String(24), nullable=False, unique=True)
+    phone = Column(String(24), nullable=False)
+
+
 class Team(Base):
     __tablename__ = "teams"
 

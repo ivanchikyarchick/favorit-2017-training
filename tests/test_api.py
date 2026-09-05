@@ -130,6 +130,46 @@ def test_invited_parent_can_sign_in_with_otp():
         assert any(item["name"] == "Тестовий Гравець" and item["number"] == 23 for item in parent_state["players"])
 
 
+def test_telegram_binding_and_login(monkeypatch):
+    from backend import telegram, main
+    from backend.database import SessionLocal
+    from backend.models import User, TelegramAccount
+
+    sent = []
+    monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "x" * 32)
+    monkeypatch.setattr(telegram, "telegram_call", lambda method, payload: sent.append(payload))
+    monkeypatch.setattr(main, "telegram_call", lambda method, payload: sent.append(payload))
+    with TestClient(app) as client:
+        with SessionLocal() as db:
+            user = User(phone="+380501112299", name="Telegram parent", role="parent")
+            db.add(user)
+            db.commit()
+            user_id = user.id
+        headers = {"X-Telegram-Bot-Api-Secret-Token": "x" * 32}
+        message = {"chat": {"id": 900001, "type": "private"}, "from": {"id": 900001},
+                   "contact": {"user_id": 900002, "phone_number": "380501112299"}}
+        assert client.post("/api/telegram/webhook", json={"message": message}).status_code == 403
+        assert client.post("/api/telegram/webhook", headers=headers, json={"message": message}).status_code == 200
+        with SessionLocal() as db:
+            assert db.get(TelegramAccount, user_id) is None
+        message["contact"]["user_id"] = 900001
+        message["forward_origin"] = {"type": "user"}
+        client.post("/api/telegram/webhook", headers=headers, json={"message": message})
+        with SessionLocal() as db:
+            assert db.get(TelegramAccount, user_id) is None
+        del message["forward_origin"]
+        client.post("/api/telegram/webhook", headers=headers, json={"message": message})
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-only")
+        response = client.post("/api/auth/request-code", json={"phone": "0501112299"})
+        assert response.status_code == 200
+        assert "devCode" not in response.json()
+        assert sent[-1]["chat_id"] == "900001"
+        code = sent[-1]["text"].split(": ")[1].split(".")[0]
+        assert client.post("/api/auth/request-code", json={"phone": "0501112299"}).status_code == 429
+        assert client.post("/api/auth/verify", json={"phone": "0501112299", "code": code}).status_code == 200
+        assert client.post("/api/auth/verify", json={"phone": "0501112299", "code": code}).status_code == 400
+
+
 def teardown_module():
     engine.dispose()
     TEST_DB.unlink(missing_ok=True)

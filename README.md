@@ -37,13 +37,17 @@ python -m venv .venv
 1. Створіть Railway-проєкт із цього GitHub-репозиторію.
 2. Додайте PostgreSQL — Railway передасть застосунку `DATABASE_URL`.
 3. Додайте змінні з `.env.example`; обов’язково задайте довгий випадковий `JWT_SECRET`, а в `INITIAL_COACH_PHONE` вкажіть реальний номер тренера у форматі `+380XXXXXXXXX`.
-4. Для SMS зареєструйтеся в TurboSMS, увімкніть HTTP API та додайте `TURBOSMS_TOKEN` і `TURBOSMS_SENDER`.
+4. Для кодів входу створіть Telegram-бота через [BotFather](https://t.me/BotFather), командою `/newbot`. Додайте `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME` (без @), `TELEGRAM_WEBHOOK_SECRET` (випадкові 32+ латинські літери/цифри) та `PUBLIC_BASE_URL` (HTTPS-адреса сайту Railway). Webhook встановлюється при запуску. Токен не публікуйте; TurboSMS для входу більше не використовується.
 5. Для push-сповіщень виконайте `python scripts/generate_vapid_keys.py` і додайте отримані `VAPID_PRIVATE_KEY` та `VAPID_PUBLIC_KEY` у Railway.
 6. Для бойового режиму задайте `APP_ENV=production` та `ENABLE_DEMO=false`.
 
 Railway автоматично знайде `Dockerfile` і запустить FastAPI. У налаштуваннях сервісу вкажіть healthcheck path `/api/health`.
 
 ## Перевірка
+Перед першим входом відкрийте бота кнопкою «Підключити Telegram», натисніть Start і «Поділитися номером». Номер має бути доданий тренером до клубу. Потім поверніться на сайт та запросіть код. Прив’язки зберігаються в PostgreSQL; нова таблиця створюється автоматично.
+
+`INITIAL_COACH_PHONE` застосовується лише до порожньої бази при `SEED_DEMO_DATA=true`. Зміна змінної не змінює тренера у вже заповненій базі.
+
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q
