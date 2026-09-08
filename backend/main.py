@@ -31,7 +31,7 @@ from .models import (
     User,
 )
 from .reminders import run_attendance_reminders, send_event_reminders_now
-from .telegram import configure_webhook, router as telegram_router, send_telegram_message, telegram_call
+from .telegram import configure_webhook, router as telegram_router, send_telegram_message, telegram_call, telegram_ready
 from .schemas import (
     AttendancePayload,
     EventPayload,
@@ -242,7 +242,7 @@ def public_config(db: Session = Depends(get_db)):
     return {"server": True, "demo": ENABLE_DEMO, "vapidPublicKey": VAPID_PUBLIC_KEY,
             "clubName": settings.name if settings else "ФК «Фаворит»",
             "welcome": settings.welcome if settings else "",
-            "telegramReady": bool(os.getenv("TELEGRAM_BOT_TOKEN")),
+            "telegramReady": telegram_ready(),
             "telegramBot": os.getenv("TELEGRAM_BOT_USERNAME", "sms_favoryt_bot").lstrip("@")}
 
 

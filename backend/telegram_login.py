@@ -29,7 +29,10 @@ class LoginPoll(BaseModel):
 @router.post("/api/auth/telegram/start")
 def start_login(response: Response, db: Session = Depends(get_db)):
     username = os.getenv("TELEGRAM_BOT_USERNAME", "sms_favoryt_bot").lstrip("@")
-    if not os.getenv("TELEGRAM_BOT_TOKEN") or not re.fullmatch(r"[A-Za-z0-9_]+", username):
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    secret = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
+    public_url = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
+    if not token or not re.fullmatch(r"[A-Za-z0-9_]{5,32}", username) or len(secret) < 32 or not public_url.startswith("https://"):
         raise HTTPException(503, "Вхід через Telegram ще не налаштовано. Зверніться до адміністратора.")
     now = datetime.utcnow()
     db.query(TelegramLogin).filter(TelegramLogin.expires_at < now).delete()

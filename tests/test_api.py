@@ -210,8 +210,20 @@ def telegram_setup(monkeypatch):
     from backend import telegram
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-only")
     monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "z" * 32)
+    monkeypatch.setenv("PUBLIC_BASE_URL", "https://club.example")
     monkeypatch.setattr(telegram, "telegram_call", lambda *args: True)
     return {"X-Telegram-Bot-Api-Secret-Token": "z" * 32}
+
+
+def test_incomplete_telegram_settings_do_not_break_healthcheck(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-only")
+    monkeypatch.setenv("TELEGRAM_BOT_USERNAME", "test_bot")
+    monkeypatch.delenv("TELEGRAM_WEBHOOK_SECRET", raising=False)
+    monkeypatch.delenv("PUBLIC_BASE_URL", raising=False)
+    with TestClient(app) as client:
+        assert client.get("/api/health").status_code == 200
+        assert client.get("/api/config").json()["telegramReady"] is False
+        assert client.post("/api/auth/telegram/start").status_code == 503
 
 
 def challenge(client):

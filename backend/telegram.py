@@ -1,5 +1,7 @@
 import hmac
+import logging
 import os
+import re
 from datetime import datetime
 
 import httpx
@@ -12,6 +14,27 @@ from .models import TelegramAccount, TelegramLogin, User
 from .telegram_login import digest
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+
+def telegram_config_error() -> str | None:
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    username = os.getenv("TELEGRAM_BOT_USERNAME", "").lstrip("@").strip()
+    url = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
+    secret = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
+    if not token:
+        return "TELEGRAM_BOT_TOKEN is missing"
+    if not re.fullmatch(r"[A-Za-z0-9_]{5,32}", username):
+        return "TELEGRAM_BOT_USERNAME is invalid"
+    if not url.startswith("https://"):
+        return "PUBLIC_BASE_URL must be an HTTPS URL"
+    if len(secret) < 32:
+        return "TELEGRAM_WEBHOOK_SECRET must contain at least 32 characters"
+    return None
+
+
+def telegram_ready() -> bool:
+    return telegram_config_error() is None
 
 
 def telegram_call(method: str, payload: dict):
@@ -41,14 +64,21 @@ def send_telegram_message(telegram_id: str, text: str) -> bool:
 
 
 def configure_webhook():
-    if not os.getenv("TELEGRAM_BOT_TOKEN"):
-        return
-    url = os.getenv("PUBLIC_BASE_URL", "https://favorit-2017-training-production.up.railway.app/").rstrip("/")
+    error = telegram_config_error()
+    if error:
+        if os.getenv("TELEGRAM_BOT_TOKEN"):
+            logger.error("Telegram webhook is disabled: %s", error)
+        return False
+    url = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
     secret = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
-    if not url.startswith("https://") or len(secret) < 32:
-        raise RuntimeError("Set HTTPS PUBLIC_BASE_URL and TELEGRAM_WEBHOOK_SECRET (32+ characters)")
-    telegram_call("setWebhook", {"url": url + "/api/telegram/webhook", "secret_token": secret,
-        "allowed_updates": ["message", "callback_query"], "max_connections": 1})
+    try:
+        telegram_call("setWebhook", {"url": url + "/api/telegram/webhook", "secret_token": secret,
+            "allowed_updates": ["message", "callback_query"], "max_connections": 1})
+    except HTTPException as error:
+        # A Telegram outage must not take down the club website and its healthcheck.
+        logger.error("Telegram webhook was not configured: %s", error.detail)
+        return False
+    return True
 
 
 @router.post("/api/telegram/webhook")
