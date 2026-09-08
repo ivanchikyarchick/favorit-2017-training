@@ -375,3 +375,67 @@ def test_admin_bootstrap_existing_database_is_one_time(monkeypatch):
             initialize_admin(db)
             # Once an administrator exists, changing the variable cannot silently grant access.
             assert not db.query(User).filter(User.phone == "+380507778888").first()
+
+
+def test_team_members_can_open_private_chat_and_change_display_name():
+    from backend.auth import create_access_token
+    from backend.database import SessionLocal
+    from backend.models import User
+    with TestClient(app) as client:
+        first = auth_headers(client, "parent")
+        first_state = client.get("/api/bootstrap", headers=first).json()
+        team_id = first_state["teams"][0]["id"]
+        peer = next(item for item in first_state["participants"][team_id] if item["role"] == "parent")
+        opened = client.post("/api/chats/direct", headers=first, json={"team_id": team_id, "user_id": peer["id"]})
+        assert opened.status_code == 200
+        chat_id = opened.json()["id"]
+        assert client.post("/api/chats/direct", headers=first, json={"team_id": team_id, "user_id": peer["id"]}).json()["id"] == chat_id
+        first_state = client.get("/api/bootstrap", headers=first).json()
+        assert next(chat for chat in first_state["chats"] if chat["id"] == chat_id)["title"] == peer["name"]
+        sent = client.post(f"/api/chats/{chat_id}/messages", headers=first, json={"text": "Привіт, напишіть мені"})
+        assert sent.status_code == 200
+        with SessionLocal() as db:
+            peer_user = db.get(User, int(peer["id"]))
+            peer_headers = {"Authorization": "Bearer " + create_access_token(peer_user)}
+            unrelated = next(user for user in db.query(User).filter(User.role == "parent").all()
+                             if user.id not in {int(first_state["user"]["id"]), peer_user.id})
+            unrelated_headers = {"Authorization": "Bearer " + create_access_token(unrelated)}
+        peer_state = client.get("/api/bootstrap", headers=peer_headers).json()
+        message = peer_state["messages"][chat_id][-1]
+        assert message["authorId"] == first_state["user"]["id"]
+        assert message["author"] == first_state["user"]["name"]
+        assert chat_id not in {chat["id"] for chat in client.get("/api/bootstrap", headers=unrelated_headers).json()["chats"]}
+        assert client.patch("/api/profile", headers=first, json={"name": "Реальне ім’я"}).status_code == 200
+        renamed = client.get("/api/bootstrap", headers=peer_headers).json()
+        assert next(chat for chat in renamed["chats"] if chat["id"] == chat_id)["title"] == "Реальне ім’я"
+
+
+def test_automatic_attendance_reminder_is_sent_once_and_never_after_answer(monkeypatch):
+    from datetime import datetime, timedelta
+    from backend.database import SessionLocal
+    from backend.models import Attendance, Event, Notification, Player
+    from backend import reminders
+
+    monkeypatch.setattr(reminders, "_send_channels", lambda *args: None)
+    with TestClient(app):
+        with SessionLocal() as db:
+            player = db.query(Player).first()
+            event = Event(team_id=player.team_id, title="Reminder once", starts_at=datetime.utcnow() + timedelta(hours=3),
+                          ends_at=datetime.utcnow() + timedelta(hours=4), place="Field", address="Address", poll_enabled=True)
+            answered = Event(team_id=player.team_id, title="Already answered", starts_at=datetime.utcnow() + timedelta(hours=4),
+                             ends_at=datetime.utcnow() + timedelta(hours=5), place="Field", address="Address", poll_enabled=True)
+            db.add_all([event, answered])
+            db.flush()
+            db.add(Attendance(event_id=answered.id, player_id=player.id, answer="yes"))
+            event_id, answered_id, team_id, guardian_id = event.id, answered.id, player.team_id, player.guardians[0].id
+            db.commit()
+        reminders.run_attendance_reminders()
+        reminders.run_attendance_reminders()
+        with SessionLocal() as db:
+            rows = db.query(Notification).filter(Notification.dedupe_key.like(f"attendance:{event_id}:%:once")).all()
+            expected_guardians = {guardian.id for teammate in db.query(Player).filter(Player.team_id == team_id)
+                                  for guardian in teammate.guardians}
+            assert len(rows) == len(expected_guardians)
+            assert len({row.user_id for row in rows}) == len(rows)
+            assert not db.query(Notification).filter(Notification.dedupe_key.like(f"attendance:{answered_id}:%:once"),
+                                                      Notification.user_id == guardian_id).first()

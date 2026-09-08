@@ -76,6 +76,15 @@ class MessagePayload(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
 
 
+class DirectChatPayload(BaseModel):
+    team_id: int | str
+    user_id: int | str
+
+
+class ProfilePayload(BaseModel):
+    name: str = Field(min_length=2, max_length=120)
+
+
 class PollPayload(BaseModel):
     event_id: int | str
 

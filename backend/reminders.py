@@ -56,7 +56,6 @@ def _send_channels(db: Session, user: User, title: str, body: str) -> None:
 def run_attendance_reminders() -> None:
     now = datetime.utcnow()
     horizon = now + timedelta(hours=48)
-    slot = now.replace(minute=(now.minute // 30) * 30, second=0, microsecond=0)
     db = SessionLocal()
     try:
         events = (
@@ -72,7 +71,16 @@ def run_attendance_reminders() -> None:
                 for guardian in player.guardians:
                     if not guardian.active or not guardian.attendance_reminders:
                         continue
-                    dedupe_key = f"attendance:{event.id}:{guardian.id}:{slot.isoformat()}"
+                    # One automatic reminder is enough. Repeating it every 30 minutes
+                    # made a confirmed event feel like an error to families.
+                    dedupe_key = f"attendance:{event.id}:{guardian.id}:once"
+                    # Older releases included a half-hour slot in this key. Treat
+                    # those notices as already sent too, so deployment itself does
+                    # not cause one more unnecessary reminder.
+                    if db.query(Notification.id).filter(
+                        Notification.dedupe_key.like(f"attendance:{event.id}:{guardian.id}:%")
+                    ).first():
+                        continue
                     notice = Notification(
                         user_id=guardian.id,
                         type="poll",

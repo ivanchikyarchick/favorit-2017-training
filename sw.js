@@ -1,4 +1,4 @@
-const CACHE = "favorit-platform-v10";
+const CACHE = "favorit-platform-v11";
 const CORE = ["./", "./styles.css", "./app.js", "./logo.png", "./image.png", "./manifest.webmanifest"];
 
 self.addEventListener("install", event => {

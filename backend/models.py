@@ -170,6 +170,10 @@ class Chat(Base):
     team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True)
     title = Column(String(180), nullable=False)
     kind = Column(String(20), nullable=False, default="team")
+    # New direct conversations explicitly identify both people. parent_user_id
+    # remains for chats created by older versions of the application.
+    member_a_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
+    member_b_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
     parent_user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 

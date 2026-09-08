@@ -36,10 +36,12 @@ from .schemas import (
     AttendancePayload,
     EventPayload,
     MessagePayload,
+    DirectChatPayload,
     PhoneRequest,
     PlayerPayload,
     PollPayload,
     PushSubscriptionPayload,
+    ProfilePayload,
     SettingsPayload,
     ScheduleRulePayload,
     TeamPayload,
@@ -66,9 +68,16 @@ def _start_scheduler() -> BackgroundScheduler | None:
 
 def ensure_schema() -> None:
     Base.metadata.create_all(bind=engine)
-    if "schedule_rule_id" not in {column["name"] for column in inspect(engine).get_columns("events")}:
+    event_columns = {column["name"] for column in inspect(engine).get_columns("events")}
+    if "schedule_rule_id" not in event_columns:
         with engine.begin() as connection:
             connection.exec_driver_sql("ALTER TABLE events ADD COLUMN schedule_rule_id INTEGER")
+    chat_columns = {column["name"] for column in inspect(engine).get_columns("chats")}
+    with engine.begin() as connection:
+        if "member_a_id" not in chat_columns:
+            connection.exec_driver_sql("ALTER TABLE chats ADD COLUMN member_a_id INTEGER")
+        if "member_b_id" not in chat_columns:
+            connection.exec_driver_sql("ALTER TABLE chats ADD COLUMN member_b_id INTEGER")
 
 
 @asynccontextmanager
@@ -152,10 +161,53 @@ def ensure_coach_team(db: Session, coach: User, team_id: int) -> Team:
     return team
 
 
+def team_members(db: Session, team_id: int) -> list[User]:
+    team = db.get(Team, team_id)
+    if not team:
+        return []
+    members = {team.coach_id: team.coach}
+    for guardian in team_guardians(db, team_id):
+        members[guardian.id] = guardian
+    return [member for member in members.values() if member and member.active]
+
+
+def direct_member_ids(db: Session, chat: Chat) -> set[int]:
+    if chat.member_a_id and chat.member_b_id:
+        return {chat.member_a_id, chat.member_b_id}
+    # Compatibility with direct chats created before explicit participants existed.
+    team = db.get(Team, chat.team_id)
+    return {item for item in (team.coach_id if team else None, chat.parent_user_id) if item}
+
+
+def direct_peer(db: Session, user: User, chat: Chat) -> User | None:
+    member_ids = direct_member_ids(db, chat)
+    peer_ids = member_ids - {user.id}
+    return db.get(User, next(iter(peer_ids))) if len(peer_ids) == 1 else None
+
+
+def find_direct_chat(db: Session, team_id: int, first_id: int, second_id: int) -> Chat | None:
+    wanted = {first_id, second_id}
+    for chat in db.query(Chat).filter(Chat.team_id == team_id, Chat.kind == "direct").all():
+        if direct_member_ids(db, chat) == wanted:
+            return chat
+    return None
+
+
+def ensure_direct_chat(db: Session, team_id: int, first_id: int, second_id: int) -> Chat:
+    existing = find_direct_chat(db, team_id, first_id, second_id)
+    if existing:
+        return existing
+    item = Chat(team_id=team_id, title="", kind="direct", member_a_id=first_id, member_b_id=second_id)
+    db.add(item)
+    return item
+
+
 def can_access_chat(db: Session, user: User, chat: Chat) -> bool:
     if chat.team_id not in team_ids_for(db, user):
         return False
-    return user.role in {"coach", "admin"} or chat.kind == "team" or chat.parent_user_id == user.id
+    if chat.kind == "team" or user.role == "admin":
+        return True
+    return user.id in direct_member_ids(db, chat)
 
 
 def team_guardians(db: Session, team_id: int) -> list[User]:
@@ -272,10 +324,9 @@ def bootstrap(user: User = Depends(current_user), db: Session = Depends(get_db))
         players = sorted(user.children, key=lambda item: item.name)
     events = db.query(Event).filter(Event.team_id.in_(allowed_ids)).order_by(Event.starts_at).all() if allowed_ids else []
     tournaments = db.query(Tournament).filter(Tournament.team_id.in_(allowed_ids)).order_by(Tournament.starts_at).all() if allowed_ids else []
-    chats_query = db.query(Chat).filter(Chat.team_id.in_(allowed_ids)) if allowed_ids else db.query(Chat).filter(False)
-    if user.role == "parent":
-        chats_query = chats_query.filter((Chat.kind == "team") | (Chat.parent_user_id == user.id))
-    chats = chats_query.order_by(Chat.created_at).all()
+    chat_candidates = (db.query(Chat).filter(Chat.team_id.in_(allowed_ids)).order_by(Chat.created_at).all()
+                       if allowed_ids else [])
+    chats = [chat for chat in chat_candidates if can_access_chat(db, user, chat)]
     chat_ids = [chat.id for chat in chats]
     messages = db.query(Message).filter(Message.chat_id.in_(chat_ids)).order_by(Message.created_at).all() if chat_ids else []
     message_users = {item.id: item for item in db.query(User).filter(User.id.in_({message.author_id for message in messages if message.author_id})).all()}
@@ -293,12 +344,28 @@ def bootstrap(user: User = Depends(current_user), db: Session = Depends(get_db))
         author = message_users.get(message.author_id)
         message_map[str(message.chat_id)].append({
             "id": str(message.id),
+            "authorId": str(author.id) if author else None,
             "author": author.name if author else "Користувач",
             "role": author.role if author else "system",
             "text": message.text,
             "time": message.created_at.strftime("%H:%M"),
             "poll": message.is_poll,
             "eventId": str(message.event_id) if message.event_id else None,
+        })
+    participants = {}
+    for team_id in allowed_ids:
+        participants[str(team_id)] = [
+            {"id": str(member.id), "name": member.name, "role": member.role}
+            for member in team_members(db, team_id) if member.id != user.id
+        ]
+    chat_data = []
+    for item in chats:
+        peer = direct_peer(db, user, item) if item.kind == "direct" else None
+        chat_data.append({
+            "id": str(item.id), "teamId": str(item.team_id),
+            "title": peer.name if peer else item.title,
+            "kind": item.kind, "unread": 0,
+            "peer": {"id": str(peer.id), "name": peer.name, "role": peer.role} if peer else None,
         })
     return {
         "admin": admin_snapshot(db) if user.role == "admin" else None,
@@ -324,7 +391,8 @@ def bootstrap(user: User = Depends(current_user), db: Session = Depends(get_db))
             "place": item.place, "status": item.status, "note": item.note,
         } for item in tournaments],
         "attendance": attendance,
-        "chats": [{"id": str(item.id), "teamId": str(item.team_id), "title": item.title, "kind": item.kind, "unread": 0} for item in chats],
+        "chats": chat_data,
+        "participants": participants,
         "messages": message_map,
         "notifications": [{
             "id": str(item.id), "type": item.type, "title": item.title, "text": item.text,
@@ -346,6 +414,13 @@ def create_team(payload: TeamPayload, coach: User = Depends(require_coach), db: 
     db.add(Chat(team_id=item.id, title=f"{item.name} — батьки", kind="team"))
     db.commit()
     return {"id": str(item.id)}
+
+
+@app.patch("/api/profile")
+def update_profile(payload: ProfilePayload, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    user.name = payload.name.strip()
+    db.commit()
+    return {"ok": True}
 
 
 def get_or_create_guardians(db: Session, contacts: tuple[tuple[str | None, str | None], ...]) -> list[User]:
@@ -380,9 +455,9 @@ def create_player(payload: PlayerPayload, coach: User = Depends(require_coach), 
     player = Player(team_id=team_id, name=payload.name.strip(), shirt_number=payload.number, position=payload.position, birth_date=payload.birth)
     player.guardians = guardians
     db.add(player)
+    team = db.get(Team, team_id)
     for parent in guardians:
-        if not db.query(Chat.id).filter(Chat.team_id == team_id, Chat.kind == "direct", Chat.parent_user_id == parent.id).first():
-            db.add(Chat(team_id=team_id, title=f"Тренер {coach.name.split()[0]}", kind="direct", parent_user_id=parent.id))
+        ensure_direct_chat(db, team_id, team.coach_id, parent.id)
     db.commit()
     return {"id": str(player.id)}
 
@@ -399,9 +474,9 @@ def update_player(player_id: int, payload: PlayerPayload, coach: User = Depends(
     player.position = payload.position
     player.birth_date = payload.birth
     player.guardians = guardians
+    team = db.get(Team, player.team_id)
     for parent in guardians:
-        if not db.query(Chat.id).filter(Chat.team_id == player.team_id, Chat.kind == "direct", Chat.parent_user_id == parent.id).first():
-            db.add(Chat(team_id=player.team_id, title=f"Тренер {coach.name.split()[0]}", kind="direct", parent_user_id=parent.id))
+        ensure_direct_chat(db, player.team_id, team.coach_id, parent.id)
     db.commit()
     return {"ok": True}
 
@@ -636,11 +711,28 @@ def create_message(chat_id: int, payload: MessagePayload, background_tasks: Back
     db.commit()
     recipients = team_guardians(db, chat.team_id) if chat.kind == "team" and user.role in {"coach", "admin"} else []
     if chat.kind == "direct":
-        team = db.get(Team, chat.team_id)
-        recipients = [db.get(User, chat.parent_user_id)] if chat.parent_user_id and user.role in {"coach", "admin"} else [db.get(User, team.coach_id)] if team else []
+        peer = direct_peer(db, user, chat)
+        recipients = [peer] if peer and peer.chat_messages else []
     telegram_ids = [account.telegram_id for account in db.query(TelegramAccount).filter(TelegramAccount.user_id.in_([recipient.id for recipient in recipients if recipient])).all()]
     background_tasks.add_task(deliver_telegram, telegram_ids, f"Нове повідомлення · {chat.title}", payload.text.strip()[:180])
     return {"id": str(item.id)}
+
+
+@app.post("/api/chats/direct")
+def open_direct_chat(payload: DirectChatPayload, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    team_id, target_id = as_id(payload.team_id), as_id(payload.user_id)
+    ensure_team_access(db, user, team_id)
+    target = db.get(User, target_id)
+    member_ids = {member.id for member in team_members(db, team_id)}
+    if not target or not target.active or target_id not in member_ids:
+        raise HTTPException(status_code=404, detail="Учасника команди не знайдено")
+    if target_id == user.id:
+        raise HTTPException(status_code=422, detail="Оберіть іншого учасника")
+    if user.role != "admin" and user.id not in member_ids:
+        raise HTTPException(status_code=403, detail="Ви не є учасником цієї команди")
+    chat = ensure_direct_chat(db, team_id, user.id, target_id)
+    db.commit()
+    return {"id": str(chat.id)}
 
 
 @app.post("/api/chats/{chat_id}/poll")

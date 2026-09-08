@@ -349,8 +349,10 @@ svg { width: 20px; height: 20px; stroke-width: 2; }
 
 .chat-layout { display: grid; grid-template-columns: 285px minmax(0, 1fr); min-height: 610px; overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
 .chat-list { border-right: 1px solid var(--line); background: #fbfcfd; }
-.chat-list-head { padding: 18px; border-bottom: 1px solid var(--line); }
+.chat-list-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 14px; border-bottom: 1px solid var(--line); }
 .chat-list-head h2 { margin: 0; font-size: 18px; }
+.chat-new { padding: 7px 9px; font-size: 12px; }
+.chat-new svg { width: 16px; height: 16px; }
 .chat-thread { display: flex; gap: 11px; width: 100%; padding: 14px 15px; border: 0; border-bottom: 1px solid var(--line); background: transparent; color: var(--ink); text-align: left; }
 .chat-thread.active { background: var(--blue-soft); }
 .chat-thread .person-avatar { background: var(--navy-2); }
@@ -372,6 +374,9 @@ svg { width: 20px; height: 20px; stroke-width: 2; }
 .message.poll-message { border-left: 4px solid var(--amber); }
 .chat-compose { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; padding: 12px; border-top: 1px solid var(--line); }
 .chat-compose input { min-width: 0; height: 42px; padding: 0 12px; border: 1px solid var(--line); border-radius: 7px; }
+.chat-empty { display: grid; place-items: center; align-content: center; min-height: 250px; gap: 8px; color: var(--muted); text-align: center; }
+.chat-empty svg { width: 34px; height: 34px; color: var(--blue); }
+.chat-empty strong { color: var(--ink); }
 
 .notice-card { display: flex; align-items: center; gap: 14px; padding: 16px; }
 .notice-icon { display: grid; place-items: center; width: 42px; height: 42px; flex: 0 0 42px; color: var(--blue); border-radius: 7px; background: var(--blue-soft); }

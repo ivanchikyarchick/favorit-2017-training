@@ -571,27 +571,28 @@ function renderTournaments() {
 
 function renderChats() {
   const chats = state.chats.filter(chat => chat.teamId === currentTeamId);
+  const participants = state.participants?.[currentTeamId] || [];
   if (!chats.some(chat => chat.id === currentChatId)) currentChatId = chats[0]?.id;
   const active = chats.find(chat => chat.id === currentChatId);
   const messages = state.messages[currentChatId] || [];
   return `
     <section class="chat-layout">
       <aside class="chat-list">
-        <div class="chat-list-head"><h2>Розмови</h2></div>
+        <div class="chat-list-head"><h2>Розмови</h2>${participants.length ? `<button class="btn btn-secondary chat-new" type="button" data-action="new-direct-chat"><i data-lucide="message-circle-plus"></i> Новий чат</button>` : ""}</div>
         ${chats.map(chat => `
           <button class="chat-thread ${chat.id === currentChatId ? "active" : ""}" type="button" data-action="select-chat" data-id="${chat.id}">
-            <span class="person-avatar">${chat.kind === "team" ? "ФК" : "АС"}</span>
-            <span class="thread-copy"><strong>${escapeHtml(chat.title)}</strong><span>${chat.kind === "team" ? "Командний чат" : "Особистий чат"}</span></span>
+            <span class="person-avatar">${chat.kind === "team" ? "ФК" : initials(chat.peer?.name || chat.title || "У")}</span>
+            <span class="thread-copy"><strong>${escapeHtml(chat.title)}</strong><span>${chat.kind === "team" ? "Командний чат" : `${roleLabel(chat.peer?.role)} · особистий чат`}</span></span>
             ${chat.unread ? `<b class="nav-badge">${chat.unread}</b>` : ""}
           </button>`).join("")}
       </aside>
       <div class="chat-panel">
         <header class="chat-head">
-          <div><h3>${active ? escapeHtml(active.title) : "Чат"}</h3><span class="small muted">${active?.kind === "team" ? `${teamPlayers().length + 1} учасників` : "Тренер команди"}</span></div>
+          <div><h3>${active ? escapeHtml(active.title) : "Чат"}</h3><span class="small muted">${active?.kind === "team" ? `${participants.length + 1} учасників` : `${roleLabel(active?.peer?.role)} · особиста розмова`}</span></div>
           ${isManager() && active?.kind === "team" ? `<button class="btn btn-secondary" type="button" data-action="chat-poll"><i data-lucide="list-checks"></i><span>Опитування</span></button>` : ""}
         </header>
         <div class="chat-messages" id="chatMessages">
-          ${messages.map(message => messageBubble(message)).join("")}
+          ${messages.length ? messages.map(message => messageBubble(message)).join("") : `<div class="chat-empty"><i data-lucide="message-circle"></i><strong>Почніть розмову</strong><span>Напишіть перше повідомлення.</span></div>`}
         </div>
         <form class="chat-compose" id="chatForm">
           <button class="icon-btn" type="button" title="Додати файл" aria-label="Додати файл"><i data-lucide="paperclip"></i></button>
@@ -603,7 +604,7 @@ function renderChats() {
 }
 
 function messageBubble(message) {
-  const mine = message.role === session.role;
+  const mine = message.authorId ? message.authorId === session?.userId : message.author === userName();
   const pollEvent = message.poll ? state.events.find(item => item.id === message.eventId) : null;
   return `
     <article class="message ${mine ? "mine" : ""} ${message.poll ? "poll-message" : ""}">
@@ -629,7 +630,7 @@ function renderNotifications() {
       <aside class="stack">
         <section class="panel">
           <div class="panel-title"><h3>Налаштування</h3></div>
-          ${settingSwitch("attendanceReminders", "Відповідь про присутність", "Нагадувати кожні 30 хвилин до відповіді")}
+          ${settingSwitch("attendanceReminders", "Відповідь про присутність", "Одне нагадування, якщо відповідь ще не надана")}
           ${settingSwitch("scheduleChanges", "Зміни розкладу", "Повідомляти про перенесення й скасування")}
           ${settingSwitch("chatMessages", "Нові повідомлення", "Сповіщати про повідомлення тренера")}
           <button class="btn btn-primary btn-block" type="button" data-action="enable-notifications"><i data-lucide="bell-ring"></i> Увімкнути на пристрої</button>
@@ -672,6 +673,46 @@ function openModal({ eyebrow = "", title, body, saveText = "Зберегти", o
   if (onDelete) $("#modalDeleteBtn").onclick = async () => { if (await onDelete() !== false) $("#appModal").close(); };
   $("#appModal").showModal();
   refreshIcons();
+}
+
+function openProfileModal() {
+  openModal({
+    eyebrow: "Профіль",
+    title: "Моє ім’я у чатах",
+    body: `<label class="field"><span>Ім’я та прізвище</span><input class="form-input" name="name" required minlength="2" maxlength="120" value="${escapeHtml(userName())}"></label><p class="small muted">Це ім’я бачитимуть учасники в чатах і списку команди.</p>`,
+    onSave: async data => {
+      const name = data.get("name").trim();
+      if (serverMode) return runServerMutation("/api/profile", { method: "PATCH", body: JSON.stringify({ name }) }, "Ім’я оновлено");
+      session.userName = name;
+      saveSession(); renderShell(); renderCurrentView(); showToast("Ім’я оновлено", "success");
+    }
+  });
+}
+
+function openDirectChatModal() {
+  const participants = state.participants?.[currentTeamId] || [];
+  if (!participants.length) return showToast("У цій команді поки немає інших учасників", "error");
+  openModal({
+    eyebrow: team()?.name || "Команда",
+    title: "Новий особистий чат",
+    saveText: "Відкрити чат",
+    body: `<label class="field"><span>З ким поговорити</span><select class="form-select" name="userId">${participants.map(person => `<option value="${person.id}">${escapeHtml(person.name)} · ${roleLabel(person.role)}</option>`).join("")}</select></label><p class="small muted">Особисті повідомлення доступні лише вам і обраному учаснику.</p>`,
+    onSave: async data => {
+      if (serverMode) {
+        try {
+          const result = await apiFetch("/api/chats/direct", { method: "POST", body: JSON.stringify({ team_id: currentTeamId, user_id: data.get("userId") }) });
+          await refreshServerState(true);
+          currentChatId = result.id;
+          navigate("chats");
+          return true;
+        } catch (error) { showToast(error.message, "error"); return false; }
+      }
+      const person = participants.find(item => item.id === data.get("userId"));
+      const chat = { id: id("direct"), teamId: currentTeamId, title: person.name, kind: "direct", peer: person, unread: 0 };
+      state.chats.push(chat); state.messages[chat.id] = []; currentChatId = chat.id;
+      saveState(); navigate("chats");
+    }
+  });
 }
 
 function toLocalInput(iso) {
@@ -929,7 +970,8 @@ function checkAttendanceReminders() {
   if (!session || session.role !== "parent" || !state.settings.attendanceReminders) return;
   const event = upcomingEvents().find(item => item.poll && new Date(item.start).getTime() - Date.now() < 48 * 60 * 60 * 1000);
   if (!event || state.attendance[event.id]?.[parentPlayer().id]) return;
-  if (Date.now() - Number(state.settings.lastReminder || 0) < 30 * 60 * 1000) return;
+  if (state.settings.remindedEventId === event.id) return;
+  state.settings.remindedEventId = event.id;
   state.settings.lastReminder = Date.now();
   addNotification("Потрібна відповідь", `Чи буде Максим на занятті ${eventDate(event.start)}?`, "poll");
   saveState();
@@ -943,6 +985,7 @@ async function sendChatMessage(text) {
     const chatId = currentChatId;
     const optimisticMessage = {
       id: `pending-${Date.now()}`,
+      authorId: session.userId,
       author: userName(),
       role: session.role,
       text: value,
@@ -962,7 +1005,7 @@ async function sendChatMessage(text) {
     return;
   }
   state.messages[currentChatId] ||= [];
-  state.messages[currentChatId].push({ id: id("message"), author: userName(), role: session.role, text: value, time: new Date().toLocaleTimeString("uk-UA", { hour: "2-digit", minute: "2-digit" }) });
+  state.messages[currentChatId].push({ id: id("message"), authorId: session.userId, author: userName(), role: session.role, text: value, time: new Date().toLocaleTimeString("uk-UA", { hour: "2-digit", minute: "2-digit" }) });
   saveState(); renderCurrentView();
 }
 
@@ -1024,6 +1067,8 @@ document.addEventListener("click", async event => {
   const action = event.target.closest("[data-action]");
   if (!action) return;
   const name = action.dataset.action;
+  if (name === "edit-profile") return openProfileModal();
+  if (name === "new-direct-chat") return openDirectChatModal();
   if (name.startsWith("admin-") && session?.role !== "admin") return;
   if (name === "admin-user") return openAdminUser(action.dataset.id);
   if (name === "admin-team") return openAdminTeam(action.dataset.id);
@@ -1167,6 +1212,10 @@ function clearTelegramLogin(message = "") {
   $("#telegramConnectBtn").hidden = false;
   $("#telegramConnectBtn").disabled = !serverMode || !publicConfig.telegramReady;
   $("#authError").textContent = message;
+}
+
+function roleLabel(role) {
+  return role === "coach" ? "Тренер" : role === "admin" ? "Адміністратор" : role === "parent" ? "Батьки" : "Учасник";
 }
 
 function showTelegramWaiting() {
