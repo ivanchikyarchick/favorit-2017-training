@@ -8,7 +8,7 @@
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="icon" href="./logo.png">
   <link rel="apple-touch-icon" href="./logo.png">
-  <link rel="stylesheet" href="./styles.css?v=weekly-schedule-1">
+  <link rel="stylesheet" href="./styles.css?v=telegram-admin-1">
   <title>ФК Фаворит — клубна платформа</title>
 </head>
 <body>
@@ -23,28 +23,20 @@
         </div>
       </div>
 
-      <div id="phoneStep">
-        <h2>Вхід до клубу</h2>
-        <p class="auth-copy">Вкажіть номер телефону, прив’язаний до вашого профілю.</p>
-        <label class="field-label" for="phoneInput">Номер телефону</label>
-        <div class="phone-field">
-          <span>+380</span>
-          <input id="phoneInput" type="tel" inputmode="numeric" autocomplete="tel" maxlength="12" placeholder="67 123 45 67">
+      <div class="telegram-entry">
+        <h2>Ваша команда поруч</h2>
+        <p class="auth-copy" id="clubWelcome">Розклад, команда й спілкування з тренером — в одному місці.</p>
+        <button class="btn btn-primary btn-block" id="telegramConnectBtn" type="button" disabled><i data-lucide="send"></i> Підключити Telegram-бота</button>
+        <ol class="login-steps"><li>Відкрийте бота й натисніть Start.</li><li>Натисніть «Поділитися номером».</li><li>Поверніться сюди — ви вже увійшли.</li></ol>
+        <p class="small muted">Вперше тут? Профіль створиться автоматично. Паролі й коди вводити не потрібно.</p>
+        <div class="login-status" id="telegramWaiting" hidden>
+          <p id="telegramStatus" role="status" aria-live="polite">Очікуємо підтвердження в Telegram…</p>
+          <a class="btn btn-secondary btn-block" id="telegramLink" target="_blank" rel="noopener noreferrer">Відкрити бота ще раз</a>
+          <button class="text-btn" id="telegramCancelBtn" type="button">Скасувати вхід</button>
         </div>
-        <button class="btn btn-primary btn-block" id="sendCodeBtn" type="button">Отримати код</button>
-        <p id="telegramEntry" hidden><a id="telegramLink" target="_blank" rel="noopener">Підключити Telegram</a></p>
       </div>
 
-      <div id="codeStep" hidden>
-        <button class="text-btn back-btn" id="backToPhoneBtn" type="button">← Змінити номер</button>
-        <h2>Підтвердження</h2>
-        <p class="auth-copy" id="codeHelp">Введіть код із Telegram.</p>
-        <label class="field-label" for="codeInput">Код входу</label>
-        <input class="code-input" id="codeInput" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="4" placeholder="••••">
-        <button class="btn btn-primary btn-block" id="verifyCodeBtn" type="button">Увійти</button>
-      </div>
-
-      <div class="demo-access" id="demoAccess">
+      <div class="demo-access" id="demoAccess" hidden>
         <span>Швидкий перегляд</span>
         <button class="btn btn-secondary" type="button" data-demo-role="parent">Кабінет батьків</button>
         <button class="btn btn-secondary" type="button" data-demo-role="coach">Кабінет тренера</button>
@@ -71,6 +63,7 @@
         <button type="button" data-nav="roster"><i data-lucide="users"></i><span>Склад</span></button>
         <button type="button" data-nav="tournaments"><i data-lucide="trophy"></i><span>Турніри</span></button>
         <button type="button" data-nav="notifications"><i data-lucide="bell"></i><span>Сповіщення</span></button>
+        <button type="button" data-nav="admin" data-admin-only hidden><i data-lucide="shield-check"></i><span>Адміністрування</span></button>
       </nav>
 
       <div class="sidebar-credit">
@@ -97,6 +90,7 @@
           <div class="account-menu" id="accountMenu" role="menu" hidden>
             <button type="button" data-switch-role="parent"><i data-lucide="user-round"></i> Кабінет батьків</button>
             <button type="button" data-switch-role="coach"><i data-lucide="clipboard-list"></i> Кабінет тренера</button>
+            <button type="button" data-nav="admin" data-admin-only hidden><i data-lucide="shield-check"></i> Адміністрування</button>
             <hr>
             <button type="button" id="logoutBtn"><i data-lucide="log-out"></i> Вийти</button>
           </div>
@@ -129,6 +123,6 @@
   <div class="toast-stack" id="toastStack" aria-live="polite"></div>
 
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
-  <script src="./app.js?v=notifications-1"></script>
+  <script src="./app.js?v=telegram-admin-1"></script>
 </body>
 </html>

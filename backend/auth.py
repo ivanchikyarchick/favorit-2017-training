@@ -67,6 +67,12 @@ def current_user(
 
 
 def require_coach(user: User = Depends(current_user)) -> User:
-    if user.role != "coach":
+    if user.role not in {"coach", "admin"}:
         raise HTTPException(status_code=403, detail="Ця дія доступна лише тренеру")
+    return user
+
+
+def require_admin(user: User = Depends(current_user)) -> User:
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Ця дія доступна лише адміністратору")
     return user

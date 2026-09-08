@@ -1,5 +1,6 @@
 import hmac
 import os
+from datetime import datetime
 
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -7,7 +8,8 @@ from sqlalchemy.orm import Session
 
 from .auth import normalize_phone
 from .database import get_db
-from .models import PendingTelegram, TelegramAccount, User
+from .models import TelegramAccount, TelegramLogin, User
+from .telegram_login import digest
 
 router = APIRouter()
 
@@ -56,65 +58,75 @@ def webhook(update: dict, x_telegram_bot_api_secret_token: str = Header(default=
         raise HTTPException(403, "Forbidden")
     callback = update.get("callback_query") or {}
     if callback:
-        sender = callback.get("from") or {}
-        message = callback.get("message") or {}
-        chat = message.get("chat") or {}
-        if chat.get("type") != "private" or chat.get("id") != sender.get("id"):
-            return {"ok": True}
-        pending = db.get(PendingTelegram, str(sender["id"]))
-        role = (callback.get("data") or "").removeprefix("register:")
-        if not pending or role not in {"coach", "parent"}:
-            telegram_call("answerCallbackQuery", {"callback_query_id": callback.get("id"), "text": "Реєстрація вже завершена або кнопка застаріла."})
-            return {"ok": True}
-        user = db.query(User).filter(User.phone == pending.phone).first()
-        if user and user.active:
-            user.role = role
-        else:
-            user = User(phone=pending.phone, name=pending.name, role=role)
-            db.add(user)
-            db.flush()
-        db.add(TelegramAccount(user_id=user.id, telegram_id=pending.telegram_id, phone=pending.phone))
-        db.delete(pending)
-        db.commit()
-        telegram_call("answerCallbackQuery", {"callback_query_id": callback.get("id"), "text": "Профіль створено"})
-        telegram_call("sendMessage", {"chat_id": chat["id"], "text": "Профіль створено як " + ("тренера" if role == "coach" else "батька") + ". Поверніться на сайт і натисніть «Отримати код»."})
+        telegram_call("answerCallbackQuery", {"callback_query_id": callback.get("id"),
+            "text": "Роль тренера призначає адміністратор. Для входу відкрийте бота із сайту."})
         return {"ok": True}
-
     message = update.get("message") or {}
-    chat = message.get("chat") or {}
-    sender = message.get("from") or {}
+    chat, sender = message.get("chat") or {}, message.get("from") or {}
     if chat.get("type") != "private" or not sender.get("id") or chat.get("id") != sender["id"]:
         return {"ok": True}
+    telegram_id = str(sender["id"])
+    now = datetime.utcnow()
+    keyboard = {"keyboard": [[{"text": "Поділитися номером", "request_contact": True}]],
+                "resize_keyboard": True, "one_time_keyboard": True}
+
+    def reply(text, markup=None):
+        telegram_call("sendMessage", {"chat_id": chat["id"], "text": text,
+                                     "reply_markup": markup if markup is not None else keyboard})
+        return {"ok": True}
+
+    text = message.get("text", "")
+    if text.split(" ")[0].split("@")[0] == "/start":
+        parts = text.split(maxsplit=1)
+        # Opening a new link invalidates this user's earlier pending browser link.
+        start_hash = digest(parts[1]) if len(parts) == 2 else ""
+        item = db.query(TelegramLogin).filter(TelegramLogin.start_hash == start_hash).with_for_update().first()
+        if not item or item.expires_at <= now or item.consumed or item.user_id:
+            return reply("Відкрийте сайт і натисніть «Підключити Telegram-бота», щоб отримати нове посилання.", {"remove_keyboard": True})
+        if item.telegram_id and item.telegram_id != telegram_id:
+            return reply("Це посилання вже використовується. Створіть нове на сайті.", {"remove_keyboard": True})
+        if item.start_update_id is not None and update.get("update_id", 0) < item.start_update_id:
+            return {"ok": True}
+        db.query(TelegramLogin).filter(TelegramLogin.telegram_id == telegram_id,
+            TelegramLogin.id != item.id, TelegramLogin.user_id.is_(None)).update({"consumed": True})
+        item.telegram_id = telegram_id
+        item.start_update_id = update.get("update_id")
+        db.commit()
+        return reply("Вхід до ФК Фаворит. Поділіться власним номером — сайт увійде автоматично. Підтверджуйте лише вхід, який ви щойно почали на своєму пристрої.")
+
     contact = message.get("contact") or {}
-    sender_name = " ".join(filter(None, [sender.get("first_name"), sender.get("last_name")])).strip() or "Користувач Telegram"
-    text = "ФК Фаворит. Підтвердьте свій номер, щоб отримувати коди входу."
-    keyboard = {"keyboard": [[{"text": "Поділитися номером", "request_contact": True}]], "resize_keyboard": True, "one_time_keyboard": True}
-    if contact:
-        if message.get("forward_origin") or contact.get("user_id") != sender["id"]:
-            text = "Надішліть власний номер кнопкою «Поділитися номером»."
-        else:
-            try:
-                phone = normalize_phone(contact.get("phone_number", ""))
-            except HTTPException:
-                phone = ""
-            user = db.query(User).filter(User.phone == phone, User.active.is_(True)).first()
-            if not user:
-                db.merge(PendingTelegram(telegram_id=str(sender["id"]), phone=phone, name=sender_name))
-                db.commit()
-                text = "Номер підтверджено. Оберіть, як зареєструватися:"
-                keyboard = {"inline_keyboard": [[{"text": "Я тренер", "callback_data": "register:coach"}], [{"text": "Я батько", "callback_data": "register:parent"}]]}
-            else:
-                account = db.get(TelegramAccount, user.id)
-                other = db.query(TelegramAccount).filter(TelegramAccount.telegram_id == str(sender["id"])).first()
-                if (account and account.telegram_id != str(sender["id"])) or (other and other.user_id != user.id):
-                    text = "Вже існує інша прив’язка. Зверніться до адміністратора клубу."
-                else:
-                    if not account:
-                        db.add(TelegramAccount(user_id=user.id, telegram_id=str(sender["id"]), phone=phone))
-                    else:
-                        account.phone = phone
-                    db.commit()
-                    text = "Номер підтверджено. Поверніться на сайт і натисніть «Отримати код». Код прийде сюди."
-                    keyboard = {"remove_keyboard": True}
-    telegram_call("sendMessage", {"chat_id": chat["id"], "text": text, "reply_markup": keyboard})
-    return {"ok": True}
+    if not contact:
+        return reply("Для входу відкрийте бота кнопкою на сайті та поділіться своїм номером.")
+    if message.get("forward_origin") or message.get("forward_date") or contact.get("user_id") != sender["id"]:
+        return reply("Надішліть власний номер кнопкою «Поділитися номером».")
+    try:
+        phone = normalize_phone(contact.get("phone_number", ""))
+    except HTTPException:
+        return reply("Потрібен коректний український номер телефону. Поділіться власним номером.")
+    item = db.query(TelegramLogin).filter(TelegramLogin.telegram_id == telegram_id,
+        TelegramLogin.consumed.is_(False), TelegramLogin.expires_at > now,
+        TelegramLogin.user_id.is_(None)).with_for_update().first()
+    if item and item.start_update_id is not None and update.get("update_id", 0) <= item.start_update_id:
+        return {"ok": True}
+    user = db.query(User).filter(User.phone == phone).first()
+    if user and not user.active:
+        return reply("Обліковий запис заблоковано. Зверніться до адміністратора.", {"remove_keyboard": True})
+    other = db.query(TelegramAccount).filter(TelegramAccount.telegram_id == telegram_id).first()
+    account = db.get(TelegramAccount, user.id) if user else None
+    if (account and account.telegram_id != telegram_id) or (other and (not user or other.user_id != user.id)):
+        return reply("Вже існує інша прив’язка. Зверніться до адміністратора клубу.", {"remove_keyboard": True})
+    if not user:
+        name = " ".join(filter(None, [sender.get("first_name"), sender.get("last_name")])).strip()
+        user = User(phone=phone, name=(name or "Користувач Telegram")[:120], role="parent")
+        db.add(user)
+        db.flush()
+    if not account:
+        db.add(TelegramAccount(user_id=user.id, telegram_id=telegram_id, phone=phone))
+    else:
+        account.phone = phone
+    if item:
+        item.user_id = user.id
+    db.commit()
+    return reply("Готово! Поверніться до вкладки сайту, з якої відкрили бота — вхід відбудеться автоматично."
+                 if item else "Номер підтверджено, профіль готовий. Для входу натисніть «Підключити Telegram-бота» на сайті.",
+                 {"remove_keyboard": True})

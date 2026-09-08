@@ -18,6 +18,29 @@
   --sidebar: 250px;
 }
 
+/* A single, readable entry point on phones and desktops. */
+.auth-screen { grid-template-columns: 1fr !important; place-items: center; background: #f4f6f8 !important; padding: 24px; }
+.auth-photo { display: none; }
+.auth-panel { width: min(100%, 480px) !important; padding: 36px !important; margin: auto; border: 1px solid var(--line); border-radius: 20px; background: white; box-shadow: var(--shadow); }
+.auth-brand { margin-bottom: 32px !important; }
+.auth-panel h2 { font-size: 27px !important; }
+.login-steps { padding-left: 22px; margin: 24px 0 18px; color: var(--muted); }
+.login-steps li { padding: 4px 0 4px 4px; }
+.login-status { background: var(--blue-soft); padding: 18px; border-radius: 12px; }
+.login-status .text-btn { margin-top: 14px; }
+.admin-summary, .admin-team, .admin-user { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.admin-summary h2, .admin-summary p, .admin-user p, .admin-team p { margin: 4px 0; }
+.admin-user, .admin-team { padding: 18px 0; border-bottom: 1px solid var(--line); }
+.admin-user > div, .admin-team > div { min-width: 0; overflow-wrap: anywhere; }
+.admin-user .btn { flex-shrink: 0; }
+.admin-team .section-actions { flex-wrap: wrap; }
+@media (max-width: 600px) {
+  .auth-screen { padding: 16px; }
+  .auth-panel { padding: 24px !important; }
+  .admin-summary, .admin-team { align-items: stretch; flex-direction: column; }
+  .admin-user { gap: 10px; }
+}
+
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; }
 body {
@@ -256,6 +279,7 @@ svg { width: 20px; height: 20px; stroke-width: 2; }
 .panel-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 15px; }
 .panel-title h3 { margin: 0; font-size: 17px; }
 .panel-title a, .panel-title button { color: var(--blue); }
+.panel-title .btn-primary { color: #fff; }
 .muted { color: var(--muted); }
 .small { font-size: 13px; }
 .stat-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; overflow: hidden; border: 1px solid var(--line); border-radius: 7px; background: var(--line); }

@@ -10,6 +10,9 @@ from fastapi.responses import FileResponse
 from sqlalchemy import func, inspect
 from sqlalchemy.orm import Session
 
+from .admin import admin_snapshot, initialize_admin, router as admin_router
+from .telegram_login import router as login_router
+from .models import ClubSettings
 from .auth import code_hash, create_access_token, current_user, generate_code, normalize_phone, require_coach
 from .database import Base, SessionLocal, engine, get_db
 from .models import (
@@ -76,6 +79,7 @@ async def lifespan(_: FastAPI):
     db = SessionLocal()
     try:
         seed_database(db)
+        initialize_admin(db)
     finally:
         db.close()
     configure_webhook()
@@ -94,6 +98,16 @@ app = FastAPI(
 )
 
 app.include_router(telegram_router)
+app.include_router(login_router)
+app.include_router(admin_router)
+
+
+@app.middleware("http")
+async def private_api_responses(request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
 
 origins = [origin.strip() for origin in os.getenv("ALLOWED_ORIGINS", "https://ivanchikyarchick.github.io").split(",") if origin.strip()]
 app.add_middleware(
@@ -117,7 +131,9 @@ def as_id(value: int | str) -> int:
 
 
 def team_ids_for(db: Session, user: User) -> list[int]:
-    if user.role == "coach":
+    if user.role == "admin":
+        return [i for (i,) in db.query(Team.id).all()]
+    if user.role in {"coach", "admin"}:
         return [team_id for (team_id,) in db.query(Team.id).filter(Team.coach_id == user.id).all()]
     return sorted({child.team_id for child in user.children})
 
@@ -131,7 +147,7 @@ def ensure_team_access(db: Session, user: User, team_id: int) -> Team:
 
 def ensure_coach_team(db: Session, coach: User, team_id: int) -> Team:
     team = db.get(Team, team_id)
-    if not team or team.coach_id != coach.id:
+    if not team or (coach.role != "admin" and team.coach_id != coach.id):
         raise HTTPException(status_code=404, detail="Команду не знайдено")
     return team
 
@@ -139,7 +155,7 @@ def ensure_coach_team(db: Session, coach: User, team_id: int) -> Team:
 def can_access_chat(db: Session, user: User, chat: Chat) -> bool:
     if chat.team_id not in team_ids_for(db, user):
         return False
-    return user.role == "coach" or chat.kind == "team" or chat.parent_user_id == user.id
+    return user.role in {"coach", "admin"} or chat.kind == "team" or chat.parent_user_id == user.id
 
 
 def team_guardians(db: Session, team_id: int) -> list[User]:
@@ -169,8 +185,12 @@ def health():
 
 
 @app.get("/api/config")
-def public_config():
+def public_config(db: Session = Depends(get_db)):
+    settings = db.get(ClubSettings, 1)
     return {"server": True, "demo": ENABLE_DEMO, "vapidPublicKey": VAPID_PUBLIC_KEY,
+            "clubName": settings.name if settings else "ФК «Фаворит»",
+            "welcome": settings.welcome if settings else "",
+            "telegramReady": bool(os.getenv("TELEGRAM_BOT_TOKEN")),
             "telegramBot": os.getenv("TELEGRAM_BOT_USERNAME", "sms_favoryt_bot").lstrip("@")}
 
 
@@ -246,7 +266,7 @@ def bootstrap(user: User = Depends(current_user), db: Session = Depends(get_db))
     allowed_ids = team_ids_for(db, user)
     teams = db.query(Team).filter(Team.id.in_(allowed_ids)).order_by(Team.birth_year.desc()).all() if allowed_ids else []
     schedule_rules = db.query(ScheduleRule).filter(ScheduleRule.team_id.in_(allowed_ids), ScheduleRule.active.is_(True)).order_by(ScheduleRule.weekday, ScheduleRule.starts_at).all() if allowed_ids else []
-    if user.role == "coach":
+    if user.role in {"coach", "admin"}:
         players = db.query(Player).filter(Player.team_id.in_(allowed_ids)).order_by(Player.name).all() if allowed_ids else []
     else:
         players = sorted(user.children, key=lambda item: item.name)
@@ -281,6 +301,8 @@ def bootstrap(user: User = Depends(current_user), db: Session = Depends(get_db))
             "eventId": str(message.event_id) if message.event_id else None,
         })
     return {
+        "admin": admin_snapshot(db) if user.role == "admin" else None,
+        "club": {"name": db.get(ClubSettings, 1).name},
         "user": {"id": str(user.id), "name": user.name, "phone": user.phone, "role": user.role},
         "teams": [{"id": str(item.id), "name": item.name, "birthYear": item.birth_year, "coach": item.coach.name, "color": item.color} for item in teams],
         "scheduleRules": [{"id": str(item.id), "teamId": str(item.team_id), "weekday": item.weekday, "start": item.starts_at, "end": item.ends_at, "title": item.title, "place": item.place, "address": item.address, "poll": item.poll_enabled} for item in schedule_rules],
@@ -523,7 +545,7 @@ def set_attendance(event_id: int, payload: AttendancePayload, user: User = Depen
     if not event or event.team_id not in team_ids_for(db, user):
         raise HTTPException(status_code=404, detail="Подію не знайдено")
     candidates = [child for child in user.children if child.team_id == event.team_id] if user.role == "parent" else []
-    if user.role == "coach" and payload.player_id is not None:
+    if user.role in {"coach", "admin"} and payload.player_id is not None:
         player = db.get(Player, as_id(payload.player_id))
         candidates = [player] if player and player.team_id == event.team_id else []
     elif payload.player_id is not None:
@@ -607,15 +629,15 @@ def create_message(chat_id: int, payload: MessagePayload, background_tasks: Back
         raise HTTPException(status_code=404, detail="Чат не знайдено")
     item = Message(chat_id=chat.id, author_id=user.id, text=payload.text.strip())
     db.add(item)
-    if user.role == "coach":
+    if user.role in {"coach", "admin"}:
         for guardian in team_guardians(db, chat.team_id):
             if guardian.chat_messages and (chat.kind == "team" or chat.parent_user_id == guardian.id):
                 db.add(Notification(user_id=guardian.id, type="chat", title=chat.title, text=payload.text.strip()[:180]))
     db.commit()
-    recipients = team_guardians(db, chat.team_id) if chat.kind == "team" and user.role == "coach" else []
+    recipients = team_guardians(db, chat.team_id) if chat.kind == "team" and user.role in {"coach", "admin"} else []
     if chat.kind == "direct":
         team = db.get(Team, chat.team_id)
-        recipients = [db.get(User, chat.parent_user_id)] if chat.parent_user_id and user.role == "coach" else [db.get(User, team.coach_id)] if team else []
+        recipients = [db.get(User, chat.parent_user_id)] if chat.parent_user_id and user.role in {"coach", "admin"} else [db.get(User, team.coach_id)] if team else []
     telegram_ids = [account.telegram_id for account in db.query(TelegramAccount).filter(TelegramAccount.user_id.in_([recipient.id for recipient in recipients if recipient])).all()]
     background_tasks.add_task(deliver_telegram, telegram_ids, f"Нове повідомлення · {chat.title}", payload.text.strip()[:180])
     return {"id": str(item.id)}

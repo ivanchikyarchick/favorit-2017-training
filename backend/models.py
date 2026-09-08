@@ -56,6 +56,27 @@ class PendingTelegram(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 
+class TelegramLogin(Base):
+    __tablename__ = "telegram_logins"
+
+    id = Column(String(64), primary_key=True)
+    browser_hash = Column(String(64), nullable=False)
+    start_hash = Column(String(64), nullable=False, unique=True)
+    telegram_id = Column(String(24), nullable=True, index=True)
+    start_update_id = Column(Integer, nullable=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
+    expires_at = Column(DateTime, nullable=False, index=True)
+    consumed = Column(Boolean, nullable=False, default=False)
+
+
+class ClubSettings(Base):
+    __tablename__ = "club_settings"
+
+    id = Column(Integer, primary_key=True, default=1)
+    name = Column(String(100), nullable=False, default="ФК «Фаворит»")
+    welcome = Column(String(500), nullable=False, default="Розклад, команда й спілкування з тренером — в одному місці.")
+
+
 class Team(Base):
     __tablename__ = "teams"
 

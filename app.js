@@ -7,7 +7,8 @@ const VIEW_TITLES = {
   chats: "Чати",
   roster: "Склад команди",
   tournaments: "Турніри",
-  notifications: "Сповіщення"
+  notifications: "Сповіщення",
+  admin: "Адміністрування"
 };
 
 const $ = selector => document.querySelector(selector);
@@ -104,7 +105,11 @@ let currentTeamId = "team-2017";
 let currentChatId = "c1";
 let serverMode = false;
 let publicConfig = { demo: true, vapidPublicKey: "" };
-let pendingPhone = "";
+const TELEGRAM_LOGIN_KEY = "favorit-telegram-login";
+let telegramLogin = null;
+let telegramPollTimer = null;
+let telegramPolling = false;
+let adminSearch = "";
 const pendingMutations = new Set();
 let chatSending = false;
 let deferredInstallPrompt = null;
@@ -136,7 +141,7 @@ async function apiFetch(path, options = {}, authenticated = true) {
   if (!response.ok) {
     let message = "Не вдалося виконати дію";
     try { message = (await response.json()).detail || message; } catch {}
-    throw new Error(message);
+    throw new Error(typeof message === "string" ? message : "Перевірте заповнення полів");
   }
   return response.status === 204 ? null : response.json();
 }
@@ -195,9 +200,10 @@ function teamPlayers() { return state.players.filter(player => player.teamId ===
 function teamEvents() { return state.events.filter(event => event.teamId === currentTeamId).sort((a, b) => new Date(a.start) - new Date(b.start)); }
 function upcomingEvents() { return teamEvents().filter(event => new Date(event.start) > new Date()); }
 function nextEvent() { return upcomingEvents()[0] || teamEvents()[0]; }
-function parentPlayer() { return state.players[0]; }
-function roleName() { return session?.role === "coach" ? "Тренер" : `Батьки · ${parentPlayer()?.name || "гравець"}`; }
-function userName() { return session?.userName || (session?.role === "coach" ? "Андрій Савчук" : "Катерина Коваленко"); }
+function parentPlayer() { return state.players.find(player => player.teamId === currentTeamId) || state.players[0]; }
+function isManager() { return ["coach", "admin"].includes(session?.role); }
+function roleName() { if (session?.role === "admin") return "Адміністратор"; return isManager() ? "Тренер" : `Батьки · ${parentPlayer()?.name || "гравець"}`; }
+function userName() { return session?.userName || (isManager() ? "Андрій Савчук" : "Катерина Коваленко"); }
 
 function showToast(message, type = "") {
   const toast = document.createElement("div");
@@ -227,7 +233,7 @@ async function signIn(role) {
   session = { role, phone: role === "coach" ? "+380671234567" : "+380932345678" };
   saveSession();
   }
-  currentTeamId = role === "parent" ? parentPlayer().teamId : currentTeamId;
+  currentTeamId = role === "parent" ? parentPlayer()?.teamId : currentTeamId;
   $("#authScreen").hidden = true;
   $("#appShell").hidden = false;
   renderShell();
@@ -240,13 +246,15 @@ function signOut() {
   localStorage.removeItem(SESSION_KEY);
   $("#appShell").hidden = true;
   $("#authScreen").hidden = false;
-  $("#phoneStep").hidden = false;
-  $("#codeStep").hidden = true;
+  clearTelegramLogin();
+  state = seedData();
   $("#authError").textContent = "";
 }
 
 function renderShell() {
-  const visibleTeams = session.role === "coach" ? state.teams : state.teams.filter(item => item.id === parentPlayer().teamId);
+  const visibleTeams = state.teams;
+  $$("[data-admin-only]").forEach(el => el.hidden = session?.role !== "admin");
+  if (state.club?.name) { document.querySelector(".brand strong").textContent = state.club.name; document.title = state.club.name; }
   $("#teamSelect").innerHTML = visibleTeams.length
     ? visibleTeams.map(item => `<option value="${item.id}" ${item.id === currentTeamId ? "selected" : ""}>${escapeHtml(item.name)}</option>`).join("")
     : `<option value="">Команда ще не створена</option>`;
@@ -254,7 +262,7 @@ function renderShell() {
   $("#userName").textContent = userName();
   $("#userRole").textContent = roleName();
   $("#userInitials").textContent = initials(userName());
-  $("#pageEyebrow").textContent = team()?.name || (session.role === "coach" ? "Налаштування клубу" : "Клуб");
+  $("#pageEyebrow").textContent = team()?.name || (isManager() ? "Налаштування клубу" : "Клуб");
   const unread = state.chats.filter(chat => chat.teamId === currentTeamId).reduce((sum, chat) => sum + chat.unread, 0);
   $("#chatBadge").textContent = unread;
   $("#chatBadge").hidden = unread === 0;
@@ -264,20 +272,26 @@ function renderShell() {
 }
 
 function navigate(view) {
+  if (view === "admin" && session?.role !== "admin") view = "dashboard";
+  $("#accountMenu").hidden = true;
   currentView = VIEW_TITLES[view] ? view : "dashboard";
   if (location.hash !== `#${currentView}`) history.replaceState(null, "", `#${currentView}`);
   $("#pageTitle").textContent = VIEW_TITLES[currentView];
-  $("#pageEyebrow").textContent = team()?.name || (session?.role === "coach" ? "Налаштування клубу" : "Клуб");
+  $("#pageEyebrow").textContent = team()?.name || (isManager() ? "Налаштування клубу" : "Клуб");
   $$(`[data-nav]`).forEach(button => button.classList.toggle("active", button.dataset.nav === currentView));
   renderCurrentView();
   $("#content").focus({ preventScroll: true });
 }
 
 function renderCurrentView() {
+  if (currentView === "admin" && session?.role !== "admin") { navigate("dashboard"); return; }
+  if (currentView === "admin" && session?.role === "admin") {
+    $("#content").innerHTML = renderAdmin(); refreshIcons(); return;
+  }
   if (!hasTeam()) {
-    $("#content").innerHTML = session?.role === "coach"
+    $("#content").innerHTML = isManager()
       ? emptyState("shield-plus", "Створіть першу команду", "Додайте команду, щоб налаштувати склад, розклад, чати та турніри клубу.", "new-team", "Створити першу команду")
-      : emptyState("users-round", "Команду ще не підключено", "Попросіть тренера додати ваш номер телефону до складу команди.");
+      : emptyState("users-round", "Команду ще не підключено", "Ви успішно зареєструвалися. Повідомте тренеру свій номер — він додасть дитину до команди. Розклад з’явиться тут автоматично.");
     refreshIcons();
     return;
   }
@@ -479,10 +493,10 @@ function renderSchedule() {
     <section>
       <div class="section-head">
         <div><h2>Розклад команди</h2><p>${events.length} запланованих подій</p></div>
-        ${session.role === "coach" ? `<div class="section-actions"><button class="btn btn-secondary" type="button" data-action="edit-weekly-schedule"><i data-lucide="calendar-cog"></i><span>Тижневий розклад</span></button><button class="btn btn-primary" type="button" data-action="new-event"><i data-lucide="plus"></i><span>Нова подія</span></button></div>` : ""}
+        ${isManager() ? `<div class="section-actions"><button class="btn btn-secondary" type="button" data-action="edit-weekly-schedule"><i data-lucide="calendar-cog"></i><span>Тижневий розклад</span></button><button class="btn btn-primary" type="button" data-action="new-event"><i data-lucide="plus"></i><span>Нова подія</span></button></div>` : ""}
       </div>
       ${rules.length ? `<section class="panel weekly-schedule"><div class="panel-title"><h3>Регулярні тренування</h3><span class="small muted">Автоматично на найближчі тижні</span></div>${rules.map(rule => `<div class="detail-row"><span>${dayNames[rule.weekday]}</span><strong>${rule.start}–${rule.end} · ${escapeHtml(rule.place)}</strong></div>`).join("")}</section>` : ""}
-      <div class="event-list">${events.length ? events.map(item => eventCard(item, session.role === "coach")).join("") : emptyState("calendar-x", "Подій ще немає", "Тренер додасть тренування або матч.")}</div>
+      <div class="event-list">${events.length ? events.map(item => eventCard(item, isManager())).join("") : emptyState("calendar-x", "Подій ще немає", "Тренер додасть тренування або матч.")}</div>
     </section>`;
 }
 
@@ -540,7 +554,7 @@ function renderTournaments() {
     <section>
       <div class="section-head">
         <div><h2>Турніри та виїзди</h2><p>Змагання команди й організаційна інформація</p></div>
-        ${session.role === "coach" ? `<button class="btn btn-primary" type="button" data-action="new-tournament"><i data-lucide="plus"></i><span>Додати турнір</span></button>` : ""}
+        ${isManager() ? `<button class="btn btn-primary" type="button" data-action="new-tournament"><i data-lucide="plus"></i><span>Додати турнір</span></button>` : ""}
       </div>
       <div class="tournament-grid">${items.length ? items.map(item => `
         <article class="tournament-card">
@@ -550,8 +564,8 @@ function renderTournaments() {
           <p>${escapeHtml(item.place)}</p>
           <div class="detail-list"><div class="detail-row"><span>Для команди</span><strong>${escapeHtml(team().name)}</strong></div></div>
           <p>${escapeHtml(item.note)}</p>
-          ${session.role === "coach" ? `<button class="text-btn" style="margin-top:14px" type="button" data-action="edit-tournament" data-id="${item.id}">Редагувати</button>` : ""}
-        </article>`).join("") : emptyState("trophy", "Турнірів ще немає", "Додайте перший турнір або виїзд команди.", session.role === "coach" ? "new-tournament" : "")}</div>
+          ${isManager() ? `<button class="text-btn" style="margin-top:14px" type="button" data-action="edit-tournament" data-id="${item.id}">Редагувати</button>` : ""}
+        </article>`).join("") : emptyState("trophy", "Турнірів ще немає", "Додайте перший турнір або виїзд команди.", isManager() ? "new-tournament" : "")}</div>
     </section>`;
 }
 
@@ -574,7 +588,7 @@ function renderChats() {
       <div class="chat-panel">
         <header class="chat-head">
           <div><h3>${active ? escapeHtml(active.title) : "Чат"}</h3><span class="small muted">${active?.kind === "team" ? `${teamPlayers().length + 1} учасників` : "Тренер команди"}</span></div>
-          ${session.role === "coach" && active?.kind === "team" ? `<button class="btn btn-secondary" type="button" data-action="chat-poll"><i data-lucide="list-checks"></i><span>Опитування</span></button>` : ""}
+          ${isManager() && active?.kind === "team" ? `<button class="btn btn-secondary" type="button" data-action="chat-poll"><i data-lucide="list-checks"></i><span>Опитування</span></button>` : ""}
         </header>
         <div class="chat-messages" id="chatMessages">
           ${messages.map(message => messageBubble(message)).join("")}
@@ -593,7 +607,7 @@ function messageBubble(message) {
   const pollEvent = message.poll ? state.events.find(item => item.id === message.eventId) : null;
   return `
     <article class="message ${mine ? "mine" : ""} ${message.poll ? "poll-message" : ""}">
-      <span class="message-author">${escapeHtml(message.author)}</span>
+      <span class="message-author">${escapeHtml(message.author)}</span>${session?.role === "admin" ? `<button class="text-btn" type="button" data-action="admin-delete-message" data-id="${message.id}" aria-label="Видалити повідомлення">Видалити</button>` : ""}
       <p>${escapeHtml(message.text)}</p>
       ${pollEvent ? `<button class="text-btn" type="button" data-action="go-to-poll" data-event="${pollEvent.id}" style="margin-top:8px;color:inherit">Відповісти в опитуванні</button>` : ""}
       <time>${escapeHtml(message.time)}</time>
@@ -1003,13 +1017,19 @@ document.addEventListener("click", async event => {
   if (role) {
     if (serverMode) return;
     session.role = role.dataset.switchRole; saveSession(); $("#accountMenu").hidden = true;
-    if (session.role === "parent") currentTeamId = parentPlayer().teamId;
+    if (session.role === "parent") currentTeamId = parentPlayer()?.teamId;
     renderShell(); navigate("dashboard"); showToast(`Відкрито: ${roleName()}`); return;
   }
 
   const action = event.target.closest("[data-action]");
   if (!action) return;
   const name = action.dataset.action;
+  if (name.startsWith("admin-") && session?.role !== "admin") return;
+  if (name === "admin-user") return openAdminUser(action.dataset.id);
+  if (name === "admin-team") return openAdminTeam(action.dataset.id);
+  if (name === "admin-settings") return openClubSettings();
+  if (name === "admin-manage-team") { currentTeamId = action.dataset.id; renderShell(); navigate("roster"); return; }
+  if (name === "admin-delete-message" && confirm("Видалити повідомлення для всіх учасників?")) return runServerMutation(`/api/admin/messages/${action.dataset.id}`, { method: "DELETE" }, "Повідомлення видалено");
   if (name === "close-modal") $("#appModal").close();
   if (name === "answer") answerAttendance(action.dataset.event, action.dataset.value);
   if (name === "change-answer") {
@@ -1021,7 +1041,7 @@ document.addEventListener("click", async event => {
   if (name === "edit-event") openEventModal(state.events.find(item => item.id === action.dataset.id));
   if (name === "new-player") openPlayerModal();
   if (name === "edit-player") openPlayerModal(state.players.find(item => item.id === action.dataset.id));
-  if (name === "new-team") openTeamModal();
+  if (name === "new-team") session?.role === "admin" ? openAdminTeam() : openTeamModal();
   if (name === "new-tournament") openTournamentModal();
   if (name === "edit-tournament") openTournamentModal(state.tournaments.find(item => item.id === action.dataset.id));
   if (name === "send-reminders") sendReminders();
@@ -1079,61 +1099,6 @@ $("#accountBtn").addEventListener("click", () => {
 $("#notificationBtn").addEventListener("click", () => navigate("notifications"));
 $("#logoutBtn").addEventListener("click", signOut);
 
-$("#sendCodeBtn").addEventListener("click", async () => {
-  const button = $("#sendCodeBtn");
-  if (button.disabled) return;
-  button.disabled = true;
-  const originalText = button.textContent;
-  const digits = $("#phoneInput").value.replace(/\D/g, "");
-  if (digits.length < 9) { $("#authError").textContent = "Введіть повний номер телефону."; button.disabled = false; return; }
-  $("#authError").textContent = "";
-  pendingPhone = $("#phoneInput").value;
-  if (serverMode) {
-    try {
-      const result = await apiFetch("/api/auth/request-code", { method: "POST", body: JSON.stringify({ phone: pendingPhone }) }, false);
-      $("#codeHelp").innerHTML = result.devCode ? `Локальний код: <strong>${escapeHtml(result.devCode)}</strong>` : "Код надіслано в Telegram. Він діє 10 хвилин.";
-    } catch (error) {
-      $("#authError").textContent = error.message;
-      button.disabled = false;
-      return;
-    }
-  } else {
-    $("#codeHelp").innerHTML = "Демо-код: <strong>1111</strong>";
-  }
-  $("#phoneStep").hidden = true;
-  $("#codeStep").hidden = false;
-  $("#codeInput").focus();
-  button.disabled = false;
-  button.textContent = originalText;
-});
-$("#backToPhoneBtn").addEventListener("click", () => { $("#phoneStep").hidden = false; $("#codeStep").hidden = true; });
-$("#verifyCodeBtn").addEventListener("click", async () => {
-  const button = $("#verifyCodeBtn");
-  if (button.disabled) return;
-  button.disabled = true;
-  if (serverMode) {
-    try {
-      const result = await apiFetch("/api/auth/verify", { method: "POST", body: JSON.stringify({ phone: pendingPhone, code: $("#codeInput").value }) }, false);
-      session = { token: result.token, role: result.user.role, userName: result.user.name, userId: result.user.id };
-      saveSession();
-      await refreshServerState();
-      $("#authScreen").hidden = true;
-      $("#appShell").hidden = false;
-      currentTeamId = state.teams[0]?.id || "";
-      renderShell(); navigate("dashboard");
-      promptNotificationSetup();
-    } catch (error) {
-      $("#authError").textContent = error.message;
-    }
-    button.disabled = false;
-    return;
-  }
-  if ($("#codeInput").value !== "1111") { $("#authError").textContent = "Для демоверсії введіть код 1111."; button.disabled = false; return; }
-  const digits = $("#phoneInput").value.replace(/\D/g, "");
-  signIn(digits.endsWith("671234567") ? "coach" : "parent");
-  button.disabled = false;
-});
-
 window.addEventListener("hashchange", () => { if (session) navigate(location.hash.slice(1)); });
 window.addEventListener("beforeinstallprompt", event => {
   event.preventDefault();
@@ -1147,7 +1112,7 @@ if ("serviceWorker" in navigator && location.protocol !== "file:") navigator.ser
 setInterval(checkAttendanceReminders, 60 * 1000);
 setInterval(() => { if (currentView === "dashboard" && session) updateAlarmStatus(); }, 60 * 1000);
 setInterval(async () => {
-  if (!serverMode || !session?.token || document.hidden || $("#appModal").open) return;
+  if (!serverMode || !session?.token || document.hidden || $("#appModal").open || (currentView === "admin" && document.activeElement?.id === "adminSearch")) return;
   try { await refreshServerState(true); } catch {}
 }, 15000);
 
@@ -1158,14 +1123,15 @@ async function initialize() {
   } catch {
     serverMode = false;
   }
-  $("#demoAccess").hidden = serverMode && !publicConfig.demo;
-  if (serverMode && /^[A-Za-z0-9_]+$/.test(publicConfig.telegramBot || "")) {
-    $("#telegramEntry").hidden = false;
-    $("#telegramLink").href = `https://t.me/${publicConfig.telegramBot}?start=login`;
-  }
+  $("#demoAccess").hidden = !serverMode || !publicConfig.demo;
+  $("#telegramConnectBtn").disabled = !serverMode || !publicConfig.telegramReady;
+  if (publicConfig.clubName) { $("#authTitle").textContent = publicConfig.clubName; document.title = publicConfig.clubName; }
+  if (publicConfig.welcome) $("#clubWelcome").textContent = publicConfig.welcome;
   $("#demoNote").textContent = serverMode
-    ? (publicConfig.demo ? "Тестовий вхід увімкнено адміністратором." : "Вхід доступний лише для номерів, доданих тренером.")
-    : "Статична демоверсія: дані зберігаються лише на цьому пристрої.";
+    ? (publicConfig.demo ? "Тестовий перегляд увімкнено адміністратором." : "")
+    : "Сервер недоступний. Перевірте з’єднання та оновіть сторінку.";
+  if (serverMode && !publicConfig.telegramReady) $("#authError").textContent = "Адміністратор ще налаштовує Telegram-бота. Спробуйте пізніше.";
+  if (!serverMode && session?.token) session = null;
 
   if (session && (!serverMode || session.token)) {
     if (serverMode) {
@@ -1178,13 +1144,153 @@ async function initialize() {
   if (session) {
     $("#authScreen").hidden = true;
     $("#appShell").hidden = false;
-    currentTeamId = session.role === "parent" ? parentPlayer().teamId : (state.teams[0]?.id || currentTeamId);
+    currentTeamId = session.role === "parent" ? parentPlayer()?.teamId : (state.teams[0]?.id || currentTeamId);
     renderShell();
     navigate(location.hash.slice(1) || "dashboard");
     promptNotificationSetup();
   } else {
+    if (serverMode) {
+      try { telegramLogin = JSON.parse(sessionStorage.getItem(TELEGRAM_LOGIN_KEY)); } catch {}
+      if (telegramLogin) { showTelegramWaiting(); pollTelegramLogin(); }
+    }
     refreshIcons();
   }
 }
 
 initialize();
+
+function clearTelegramLogin(message = "") {
+  telegramLogin = null;
+  clearTimeout(telegramPollTimer);
+  sessionStorage.removeItem(TELEGRAM_LOGIN_KEY);
+  $("#telegramWaiting").hidden = true;
+  $("#telegramConnectBtn").hidden = false;
+  $("#telegramConnectBtn").disabled = !serverMode || !publicConfig.telegramReady;
+  $("#authError").textContent = message;
+}
+
+function showTelegramWaiting() {
+  $("#telegramWaiting").hidden = false;
+  $("#telegramConnectBtn").hidden = true;
+  $("#telegramLink").href = telegramLogin.url;
+  $("#telegramStatus").textContent = "Очікуємо підтвердження в Telegram…";
+}
+
+async function pollTelegramLogin() {
+  if (!telegramLogin || session?.token || telegramPolling) return;
+  clearTimeout(telegramPollTimer);
+  const pending = telegramLogin;
+  if (Date.now() >= pending.expiresAt) { clearTelegramLogin("Час очікування минув. Натисніть кнопку, щоб спробувати ще раз."); return; }
+  telegramPolling = true;
+  try {
+    const result = await apiFetch("/api/auth/telegram/poll", {
+      method: "POST", body: JSON.stringify({ id: pending.id, secret: pending.secret })
+    }, false);
+    if (telegramLogin !== pending) return;
+    if (result.status === "approved") {
+      session = { token: result.token, role: result.user.role, userName: result.user.name, userId: result.user.id };
+      saveSession();
+      clearTelegramLogin();
+      await refreshServerState();
+      $("#authScreen").hidden = true;
+      $("#appShell").hidden = false;
+      renderShell(); navigate(session.role === "admin" ? "admin" : "dashboard");
+    } else if (result.status === "expired" || result.status === "blocked") {
+      clearTelegramLogin(result.status === "blocked" ? "Обліковий запис заблоковано. Зверніться до адміністратора." : "Посилання вже використано або застаріло. Спробуйте ще раз.");
+    } else {
+      $("#telegramStatus").textContent = "Очікуємо: натисніть Start і поділіться номером у боті.";
+    }
+  } catch (error) {
+    if (session?.token) {
+      $("#authError").textContent = "Вхід підтверджено, але дані не завантажилися. Оновіть сторінку.";
+    } else if (telegramLogin === pending) {
+      $("#telegramStatus").textContent = "З’єднання перервано. Пробуємо знову…";
+    }
+  } finally {
+    telegramPolling = false;
+    if (telegramLogin) telegramPollTimer = setTimeout(pollTelegramLogin, 2500);
+  }
+}
+
+$("#telegramConnectBtn").addEventListener("click", async () => {
+  const button = $("#telegramConnectBtn");
+  if (button.disabled) return;
+  button.disabled = true;
+  $("#authError").textContent = "";
+  // Open during the click so mobile browsers do not block the Telegram tab.
+  const popup = window.open("about:blank", "_blank");
+  if (popup) popup.opener = null;
+  try {
+    const result = await apiFetch("/api/auth/telegram/start", { method: "POST" }, false);
+    telegramLogin = { ...result, expiresAt: Date.now() + result.expiresIn * 1000 };
+    sessionStorage.setItem(TELEGRAM_LOGIN_KEY, JSON.stringify(telegramLogin));
+    showTelegramWaiting();
+    if (popup) popup.location.replace(result.url);
+    pollTelegramLogin();
+  } catch (error) {
+    if (popup) popup.close();
+    clearTelegramLogin(error.message);
+  } finally { button.disabled = false; }
+});
+$("#telegramCancelBtn").addEventListener("click", () => clearTelegramLogin());
+window.addEventListener("focus", () => pollTelegramLogin());
+document.addEventListener("visibilitychange", () => { if (!document.hidden) pollTelegramLogin(); });
+
+function renderAdmin() {
+  const admin = state.admin;
+  if (!admin) return emptyState("shield-check", "Адміністрування недоступне", "Оновіть сторінку.");
+  const coaches = admin.users.filter(u => u.active && u.role === "coach").length;
+  return `<div class="stack">
+    <section class="panel admin-summary"><div><h2>Керування клубом</h2><p class="muted">${admin.users.length} користувачів · ${coaches} тренерів · ${admin.teams.length} команд</p></div><button class="btn btn-secondary" data-action="admin-settings">Налаштування сайту</button></section>
+    <section class="panel"><div class="panel-title"><h3>Команди</h3><button class="btn btn-primary" data-action="admin-team"><i data-lucide="plus"></i> Додати команду</button></div>
+      <div class="admin-team-list">${admin.teams.map(t => `<article class="admin-team"><div><strong>${escapeHtml(t.name)}</strong><p class="small muted">${t.birthYear} рік · ${escapeHtml(admin.users.find(u => u.id === t.coachId)?.name || "Без тренера")}</p></div><div class="section-actions"><button class="btn btn-secondary" data-action="admin-team" data-id="${t.id}">Команда й тренер</button><button class="btn btn-secondary" data-action="admin-manage-team" data-id="${t.id}">Відкрити склад</button></div></article>`).join("") || `<p class="muted">Створіть першу команду й призначте їй тренера.</p>`}</div>
+      <p class="small muted">Оберіть команду у меню, щоб керувати її розкладом, складом, турнірами та чатами.</p>
+    </section>
+    <section class="panel"><div class="panel-title"><h3>Користувачі</h3></div><label class="field"><span>Знайти за ім’ям або номером</span><input class="form-input" id="adminSearch" type="search" value="${escapeHtml(adminSearch)}" placeholder="Ім’я або +380…"></label><div id="adminUsers">${renderAdminUsers()}</div></section>
+  </div>`;
+}
+
+function renderAdminUsers() {
+  const roles = { parent: "Батьки", coach: "Тренер", admin: "Адміністратор" };
+  const users = (state.admin?.users || []).filter(u => `${u.name} ${u.phone}`.toLocaleLowerCase("uk").includes(adminSearch.toLocaleLowerCase("uk")));
+  return users.map(u => `<article class="admin-user"><div><strong>${escapeHtml(u.name)}</strong><p class="small muted">${escapeHtml(u.phone)} · ${roles[u.role]}${u.active ? "" : " · Заблоковано"}${u.telegram ? " · Telegram підключено" : ""}</p></div><button class="btn btn-secondary" data-action="admin-user" data-id="${u.id}">Керувати</button></article>`).join("") || `<p class="muted">Нікого не знайдено.</p>`;
+}
+
+document.addEventListener("input", event => {
+  if (event.target.id !== "adminSearch") return;
+  adminSearch = event.target.value;
+  $("#adminUsers").innerHTML = renderAdminUsers();
+});
+
+function openAdminUser(userId) {
+  const user = state.admin.users.find(u => u.id === userId);
+  if (!user) return;
+  openModal({ title: "Користувач", eyebrow: user.phone,
+    body: `<div class="stack"><label class="field"><span>Ім’я</span><input class="form-input" name="name" required minlength="2" maxlength="120" value="${escapeHtml(user.name)}"></label><label class="field"><span>Роль</span><select class="form-select" name="role">${Object.entries({parent:"Батьки",coach:"Тренер",admin:"Адміністратор"}).map(([value,label]) => `<option value="${value}" ${value === user.role ? "selected" : ""}>${label}</option>`).join("")}</select></label><label><input type="checkbox" name="active" ${user.active ? "checked" : ""}> Доступ до сайту дозволено</label><p class="small muted">Тренер керує своїми командами. Адміністратор має доступ до всього клубу.</p></div>`,
+    onSave: data => runServerMutation(`/api/admin/users/${user.id}`, { method: "PATCH", body: JSON.stringify({name: data.get("name"), role: data.get("role"), active: data.has("active")}) }, "Користувача оновлено")
+  });
+}
+
+function openAdminTeam(teamId) {
+  const existing = state.admin.teams.find(t => t.id === teamId);
+  const coaches = state.admin.users.filter(u => u.active && ["coach", "admin"].includes(u.role));
+  openModal({ title: existing ? "Команда й тренер" : "Нова команда",
+    body: `<div class="stack"><label class="field"><span>Назва</span><input class="form-input" name="name" required minlength="3" maxlength="100" value="${escapeHtml(existing?.name || "")}"></label><label class="field"><span>Рік народження</span><input class="form-input" type="number" name="birthYear" min="2005" max="2100" required value="${existing?.birthYear || 2017}"></label><label class="field"><span>Тренер</span><select class="form-select" name="coachId" required>${coaches.map(u => `<option value="${u.id}" ${u.id === existing?.coachId ? "selected" : ""}>${escapeHtml(u.name)} · ${escapeHtml(u.phone)}</option>`).join("")}</select></label><p class="small muted">Щоб додати нового тренера до списку, змініть його роль у розділі «Користувачі».</p></div>`,
+    onSave: data => runServerMutation(existing ? `/api/admin/teams/${existing.id}` : "/api/admin/teams", {method: existing ? "PUT" : "POST", body: JSON.stringify({name:data.get("name"), birthYear:Number(data.get("birthYear")), coachId:Number(data.get("coachId"))})}, "Команду збережено"),
+    onDelete: existing ? () => {
+      if (!confirm(`Видалити «${existing.name}» разом зі складом, розкладом, відповідями, турнірами та чатами? Цю дію не можна скасувати.`)) return false;
+      return runServerMutation(`/api/admin/teams/${existing.id}`, {method:"DELETE"}, "Команду видалено");
+    } : null
+  });
+}
+
+function openClubSettings() {
+  const settings = state.admin.settings;
+  openModal({ title: "Налаштування сайту", body: `<div class="stack"><label class="field"><span>Назва клубу</span><input class="form-input" name="name" minlength="2" maxlength="100" required value="${escapeHtml(settings.name)}"></label><label class="field"><span>Текст на сторінці входу</span><textarea class="form-textarea" name="welcome" maxlength="500">${escapeHtml(settings.welcome)}</textarea></label></div>`,
+    onSave: async data => {
+      const result = await runServerMutation("/api/admin/settings", {method:"PUT", body:JSON.stringify(Object.fromEntries(data))}, "Налаштування збережено");
+      if (result !== false) { $("#authTitle").textContent = data.get("name"); $("#clubWelcome").textContent = data.get("welcome"); }
+      return result;
+    }
+  });
+}
